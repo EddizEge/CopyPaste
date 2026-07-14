@@ -1,0 +1,327 @@
+<Window
+    x:Class="CopyPaste.App.MainWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    Title="CopyPaste">
+
+    <Grid x:Name="RootGrid" Background="#101114" AllowDrop="True"
+          DragOver="RootGrid_DragOver" Drop="RootGrid_Drop">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="76" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <Border Background="#17191E" BorderBrush="#292C34" BorderThickness="0,0,0,1">
+            <Grid Padding="28,0">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <StackPanel Orientation="Horizontal" Spacing="12" VerticalAlignment="Center">
+                    <Border Width="42" Height="42" CornerRadius="12" Background="#6D5DFB">
+                        <TextBlock Text="CP" Foreground="White" FontWeight="Bold"
+                                   HorizontalAlignment="Center" VerticalAlignment="Center" />
+                    </Border>
+                    <StackPanel VerticalAlignment="Center">
+                        <TextBlock Text="CopyPaste" Foreground="White" FontSize="22" FontWeight="SemiBold" />
+                        <TextBlock Text="Robocopy destekli dosya transferi" Foreground="#98A1B2" FontSize="12" />
+                    </StackPanel>
+                </StackPanel>
+                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                    <Button x:Name="CheckUpdatesButton" Content="Güncellemeleri kontrol et"
+                            Click="CheckUpdatesButton_Click" Padding="16,8" />
+                    <Button Content="Tepsiye küçült" Click="TrayButton_Click" Padding="16,8" />
+                    <Button Content="Geçmiş" Click="HistoryButton_Click" Padding="16,8" />
+                    <Button Content="Ayarlar" Click="SettingsButton_Click" Padding="16,8" />
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <ScrollViewer Grid.Row="1" HorizontalScrollBarVisibility="Disabled">
+            <Grid Padding="28" MaxWidth="1120" HorizontalAlignment="Center">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="640" />
+                    <ColumnDefinition Width="20" />
+                    <ColumnDefinition Width="360" />
+                </Grid.ColumnDefinitions>
+
+                <StackPanel Spacing="16">
+                    <Border Background="#191B21" BorderBrush="#2B2E37" BorderThickness="1"
+                            CornerRadius="16" Padding="22">
+                        <StackPanel Spacing="14">
+                            <TextBlock Text="Yeni transfer" Foreground="White" FontSize="20" FontWeight="SemiBold" />
+                            <TextBlock Text="Kaynak ve hedef klasörlerini seçerek güvenli kopyalamayı başlatın."
+                                       Foreground="#98A1B2" TextWrapping="Wrap" />
+
+                            <Border Background="#20222A" BorderBrush="#3A3E4A" BorderThickness="1"
+                                    CornerRadius="10" Padding="12">
+                                <TextBlock x:Name="DropHintText" Text="Klasörü buraya sürükleyerek kaynak olarak seçebilirsiniz"
+                                           Foreground="#AEB6C7" HorizontalAlignment="Center" TextWrapping="Wrap" />
+                            </Border>
+
+                            <TextBlock Text="Kaynak klasör" Foreground="White" FontWeight="SemiBold" Margin="0,8,0,0" />
+                            <Grid ColumnSpacing="10">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <TextBox x:Name="SourceTextBox" PlaceholderText="Kopyalanacak klasör" />
+                                <Button Grid.Column="1" Content="Gözat" Tag="Source" Click="BrowseButton_Click" />
+                            </Grid>
+
+                            <TextBlock Text="↓" Foreground="#6D5DFB" FontSize="22" HorizontalAlignment="Center" />
+
+                            <TextBlock Text="Hedef klasör" Foreground="White" FontWeight="SemiBold" />
+                            <Grid ColumnSpacing="10">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <TextBox x:Name="DestinationTextBox" PlaceholderText="Dosyaların kopyalanacağı klasör" />
+                                <Button Grid.Column="1" Content="Gözat" Tag="Destination" Click="BrowseButton_Click" />
+                            </Grid>
+
+                            <Border x:Name="ValidationInfoBar" Visibility="Collapsed" Background="#3A1C22"
+                                    BorderBrush="#D65768" BorderThickness="1" CornerRadius="8" Padding="12">
+                                <TextBlock x:Name="ValidationText" Foreground="#FFB4BE" TextWrapping="Wrap" />
+                            </Border>
+
+                            <Border x:Name="PreflightInfoBar" Visibility="Collapsed" Background="#182D28"
+                                    BorderBrush="#2F8F78" BorderThickness="1" CornerRadius="8" Padding="12">
+                                <TextBlock x:Name="PreflightText" Foreground="#A8E6D3" TextWrapping="Wrap" />
+                            </Border>
+
+                            <Border x:Name="UpdateInfoBar" Visibility="Collapsed" Background="#211D3D"
+                                    BorderBrush="#6D5DFB" BorderThickness="1" CornerRadius="8" Padding="12">
+                                <Grid ColumnSpacing="12">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock x:Name="UpdateStatusText" Foreground="#DAD6FF"
+                                               VerticalAlignment="Center" TextWrapping="Wrap" />
+                                    <Button x:Name="OpenUpdateButton" Grid.Column="1" Content="İndir"
+                                            Click="OpenUpdateButton_Click" />
+                                </Grid>
+                            </Border>
+
+                            <Grid ColumnSpacing="12" Margin="0,6,0,0">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <StackPanel>
+                                    <TextBlock Text="Kopyalama profili" Foreground="#C8CEDA" FontSize="12" Margin="0,0,0,5" />
+                                    <ComboBox x:Name="ProfileComboBox" MinWidth="255" DisplayMemberPath="Name"
+                                              SelectionChanged="ProfileComboBox_SelectionChanged" />
+                                </StackPanel>
+                                <Button x:Name="StartButton" Grid.Column="1" Content="Kuyruğa ekle"
+                                        Background="#6D5DFB" Foreground="White" Padding="20,10"
+                                        VerticalAlignment="Bottom" Click="StartButton_Click" />
+                            </Grid>
+                            <TextBlock x:Name="ProfileDescriptionText" Foreground="#98A1B2" TextWrapping="Wrap" />
+
+                            <Expander Header="Gelişmiş seçenekler" Background="#20222A"
+                                      BorderBrush="#3A3E4A" BorderThickness="1" CornerRadius="10"
+                                      Padding="12" Margin="0,4,0,0">
+                                <StackPanel Spacing="12" Margin="0,10,0,2">
+                                    <Grid ColumnSpacing="12">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel Spacing="5">
+                                            <TextBlock Text="Mevcut dosyalar" Foreground="#C8CEDA" FontSize="12" />
+                                            <ComboBox x:Name="ExistingFileBehaviorComboBox" DisplayMemberPath="Label"
+                                                      HorizontalAlignment="Stretch" />
+                                        </StackPanel>
+                                        <StackPanel Grid.Column="1" Spacing="5">
+                                            <TextBlock Text="Transfer doğrulaması" Foreground="#C8CEDA" FontSize="12" />
+                                            <ComboBox x:Name="VerificationModeComboBox" DisplayMemberPath="Label"
+                                                      HorizontalAlignment="Stretch" />
+                                        </StackPanel>
+                                    </Grid>
+                                    <StackPanel Spacing="5">
+                                        <TextBlock Text="Dosya filtreleri" Foreground="#C8CEDA" FontSize="12" />
+                                        <TextBox x:Name="FilePatternsTextBox" Text="*"
+                                                 PlaceholderText="Örn. *.jpg;*.png;rapor-??.pdf" />
+                                        <TextBlock Text="Birden fazla filtreyi noktalı virgülle ayırın."
+                                                   Foreground="#7F8796" FontSize="11" />
+                                    </StackPanel>
+                                    <StackPanel Spacing="5">
+                                        <TextBlock Text="Hariç tutulacak klasörler" Foreground="#C8CEDA" FontSize="12" />
+                                        <TextBox x:Name="ExcludedDirectoriesTextBox"
+                                                 PlaceholderText="Örn. node_modules;.git;temp" />
+                                        <TextBlock Text="Klasör adlarını noktalı virgülle ayırın; alt klasörlerde de uygulanır."
+                                                   Foreground="#7F8796" FontSize="11" TextWrapping="Wrap" />
+                                    </StackPanel>
+                                </StackPanel>
+                            </Expander>
+                        </StackPanel>
+                    </Border>
+
+                    <Border x:Name="ProgressCard" Visibility="Collapsed" Background="#191B21"
+                            BorderBrush="#2B2E37" BorderThickness="1" CornerRadius="16" Padding="22">
+                        <StackPanel Spacing="12">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock x:Name="StatusText" Text="Kopyalama hazırlanıyor" Foreground="White"
+                                           FontSize="18" FontWeight="SemiBold" />
+                                <TextBlock x:Name="PercentageText" Grid.Column="1" Text="0%" Foreground="White"
+                                           FontSize="18" FontWeight="SemiBold" />
+                            </Grid>
+                            <ProgressBar x:Name="CopyProgressBar" Minimum="0" Maximum="100" Height="6" />
+                            <TextBlock x:Name="CurrentFileText" Text="Dosyalar taranıyor…" Foreground="#98A1B2"
+                                       TextTrimming="CharacterEllipsis" />
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <Button x:Name="PauseButton" Content="Duraklat" Click="PauseButton_Click" />
+                                <Button x:Name="CancelButton" Content="İptal et" Click="CancelButton_Click" />
+                            </StackPanel>
+                        </StackPanel>
+                    </Border>
+                </StackPanel>
+
+                <StackPanel Grid.Column="2" Spacing="16">
+                    <Border Background="#191B21" BorderBrush="#2B2E37" BorderThickness="1"
+                            CornerRadius="16" Padding="20">
+                        <StackPanel Spacing="12">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="Transfer kuyruğu" Foreground="White" FontSize="18" FontWeight="SemiBold" />
+                                <TextBlock x:Name="QueueSummaryText" Grid.Column="1" Text="0 iş"
+                                           Foreground="#98A1B2" VerticalAlignment="Center" />
+                            </Grid>
+                            <TextBlock x:Name="EmptyQueueText" Text="Kuyruk boş. Bir transfer ekleyin."
+                                       Foreground="#98A1B2" TextWrapping="Wrap" />
+                            <ListView x:Name="QueueListView" MaxHeight="300" SelectionMode="Single"
+                                      SelectionChanged="QueueListView_SelectionChanged">
+                                <ListView.ItemTemplate>
+                                    <DataTemplate>
+                                        <Border Background="#23262E" CornerRadius="10" Padding="12" Margin="0,0,0,8">
+                                            <StackPanel Spacing="5">
+                                                <Grid>
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="*" />
+                                                        <ColumnDefinition Width="Auto" />
+                                                    </Grid.ColumnDefinitions>
+                                                    <TextBlock Text="{Binding Title}" Foreground="White" FontWeight="SemiBold"
+                                                               TextTrimming="CharacterEllipsis" />
+                                                    <TextBlock Grid.Column="1" Text="{Binding StatusLabel}" Foreground="#A8E6D3"
+                                                               Margin="10,0,0,0" />
+                                                </Grid>
+                                                <TextBlock Text="{Binding Detail}" Foreground="#98A1B2" FontSize="12"
+                                                           TextTrimming="CharacterEllipsis" />
+                                                <ProgressBar Minimum="0" Maximum="100" Value="{Binding Progress}" Height="4" />
+                                            </StackPanel>
+                                        </Border>
+                                    </DataTemplate>
+                                </ListView.ItemTemplate>
+                            </ListView>
+                            <Grid ColumnSpacing="8">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <Button x:Name="StartQueueButton" Content="Kuyruğu başlat" Background="#6D5DFB"
+                                        Foreground="White" HorizontalAlignment="Stretch" Click="StartQueueButton_Click" />
+                                <Button x:Name="ClearQueueButton" Grid.Column="1" Content="Temizle"
+                                        Click="ClearQueueButton_Click" />
+                            </Grid>
+                            <Grid ColumnSpacing="6">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <Button x:Name="MoveUpButton" Content="↑" ToolTipService.ToolTip="Yukarı taşı"
+                                        Click="MoveUpButton_Click" />
+                                <Button x:Name="MoveDownButton" Grid.Column="1" Content="↓" ToolTipService.ToolTip="Aşağı taşı"
+                                        Click="MoveDownButton_Click" />
+                                <Button x:Name="RetryButton" Grid.Column="2" Content="Yeniden dene"
+                                        HorizontalAlignment="Stretch" Click="RetryButton_Click" />
+                                <Button x:Name="RemoveQueueItemButton" Grid.Column="3" Content="Kaldır"
+                                        Click="RemoveQueueItemButton_Click" />
+                            </Grid>
+                        </StackPanel>
+                    </Border>
+
+                    <Border Background="#191B21" BorderBrush="#2B2E37" BorderThickness="1"
+                            CornerRadius="16" Padding="20">
+                        <StackPanel Spacing="10">
+                            <TextBlock Text="Çalışma ayarları" Foreground="White" FontSize="18" FontWeight="SemiBold" />
+                            <ToggleSwitch x:Name="ContinueOnErrorToggle" Header="Hata olsa da sıradaki işe geç" />
+                            <ToggleSwitch x:Name="NotificationsToggle" Header="Transfer sonunda bildirim göster" />
+                            <ToggleSwitch x:Name="MinimizeOnCloseToggle" Header="Aktif işte kapatılırsa tepsiye küçült" />
+                            <Button Content="Ayarları kaydet" HorizontalAlignment="Stretch"
+                                    Click="SaveSettingsButton_Click" />
+                        </StackPanel>
+                    </Border>
+
+                    <Border Background="#191B21" BorderBrush="#2B2E37" BorderThickness="1"
+                            CornerRadius="16" Padding="20">
+                        <StackPanel Spacing="10">
+                            <TextBlock Text="Windows entegrasyonu" Foreground="White" FontSize="18" FontWeight="SemiBold" />
+                            <TextBlock x:Name="IntegrationStatusText" Foreground="#98A1B2" TextWrapping="Wrap" />
+                            <Grid ColumnSpacing="8">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <Button x:Name="ExplorerIntegrationButton" Content="Sağ tık menüsünü ekle"
+                                        HorizontalAlignment="Stretch" Click="ExplorerIntegrationButton_Click" />
+                                <Button x:Name="TestNotificationButton" Grid.Column="1" Content="Bildirimi test et"
+                                        HorizontalAlignment="Stretch" Click="TestNotificationButton_Click" />
+                            </Grid>
+                        </StackPanel>
+                    </Border>
+
+                    <Border Background="#191B21" BorderBrush="#2B2E37" BorderThickness="1"
+                            CornerRadius="16" Padding="20">
+                        <StackPanel Spacing="14">
+                            <TextBlock Text="Güvenli varsayılanlar" Foreground="White" FontSize="18" FontWeight="SemiBold" />
+                            <Border Background="#23262E" CornerRadius="10" Padding="14">
+                                <StackPanel>
+                                    <TextBlock Text="Kesintiden devam" Foreground="White" FontWeight="SemiBold" />
+                                    <TextBlock Text="Yarım kalan transferler yeniden başlatılabilir."
+                                               Foreground="#98A1B2" TextWrapping="Wrap" />
+                                </StackPanel>
+                            </Border>
+                            <Border Background="#23262E" CornerRadius="10" Padding="14">
+                                <StackPanel>
+                                    <TextBlock Text="Silme yapmaz" Foreground="White" FontWeight="SemiBold" />
+                                    <TextBlock Text="MIR ve PURGE seçenekleri ilk sürümde kapalıdır."
+                                               Foreground="#98A1B2" TextWrapping="Wrap" />
+                                </StackPanel>
+                            </Border>
+                            <Border Background="#23262E" CornerRadius="10" Padding="14">
+                                <StackPanel>
+                                    <TextBlock Text="Sınırlı tekrar" Foreground="White" FontWeight="SemiBold" />
+                                    <TextBlock Text="Hatalı bir dosyada sonsuza kadar beklemez."
+                                               Foreground="#98A1B2" TextWrapping="Wrap" />
+                                </StackPanel>
+                            </Border>
+                        </StackPanel>
+                    </Border>
+
+                    <Border Background="#191B21" BorderBrush="#2B2E37" BorderThickness="1"
+                            CornerRadius="16" Padding="20">
+                        <StackPanel Spacing="8">
+                            <TextBlock Text="Son işlem" Foreground="White" FontSize="18" FontWeight="SemiBold" />
+                            <TextBlock x:Name="LastJobTitle" Text="Henüz tamamlanan işlem yok"
+                                       Foreground="White" FontWeight="SemiBold" TextWrapping="Wrap" />
+                            <TextBlock x:Name="LastJobDetails" Text="İlk transferiniz burada görünecek."
+                                       Foreground="#98A1B2" TextWrapping="Wrap" />
+                        </StackPanel>
+                    </Border>
+                </StackPanel>
+            </Grid>
+        </ScrollViewer>
+    </Grid>
+</Window>

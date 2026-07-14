@@ -1,0 +1,14 @@
+.dotnet/
+.vs/
+bin/
+obj/
+artifacts/
+.qa/
+AppPackages/
+TestResults/
+*.msix
+*.msixbundle
+*.appxupload
+*.user
+*.suo
+*.log

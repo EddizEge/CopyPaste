@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
+    <TargetPlatformMinVersion>10.0.17763.0</TargetPlatformMinVersion>
+    <RootNamespace>CopyPaste.App</RootNamespace>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <Platforms>x64</Platforms>
+    <RuntimeIdentifiers>win-x64</RuntimeIdentifiers>
+    <UseWinUI>true</UseWinUI>
+    <WindowsPackageType Condition="'$(BuildMsix)' != 'true'">None</WindowsPackageType>
+    <EnableMsixTooling Condition="'$(BuildMsix)' == 'true'">true</EnableMsixTooling>
+    <AppxPackageSigningEnabled Condition="'$(BuildMsix)' == 'true'">false</AppxPackageSigningEnabled>
+    <AppxSymbolPackageEnabled Condition="'$(BuildMsix)' == 'true'">false</AppxSymbolPackageEnabled>
+    <DebugType Condition="'$(BuildMsix)' == 'true'">none</DebugType>
+    <DebugSymbols Condition="'$(BuildMsix)' == 'true'">false</DebugSymbols>
+    <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <Version>1.1.0</Version>
+    <AssemblyVersion>1.1.0.0</AssemblyVersion>
+    <FileVersion>1.1.0.0</FileVersion>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.8.260508005" />
+    <ProjectReference Include="..\CopyPaste.Core\CopyPaste.Core.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <Content Include="Assets\*.png" />
+  </ItemGroup>
+</Project>

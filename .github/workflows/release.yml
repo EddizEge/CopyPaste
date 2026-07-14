@@ -1,0 +1,32 @@
+name: Build Windows release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          global-json-file: global.json
+      - name: Run core tests
+        shell: pwsh
+        run: dotnet run --project tests/CopyPaste.Core.Tests/CopyPaste.Core.Tests.csproj -c Release
+      - name: Build portable package
+        shell: pwsh
+        run: ./tools/Build-Release.ps1
+      - name: Create GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $zip = Get-Item "artifacts/CopyPaste-*-win-x64.zip" | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+          gh release create "${{ github.ref_name }}" $zip.FullName --generate-notes --title "CopyPaste ${{ github.ref_name }}"

@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0b0c10">
+  <meta name="description" content="CopyPaste — Robocopy tabanlı hızlı ve güvenilir Windows dosya transferi.">
+  <title>CopyPaste — Güvenilir Windows dosya transferi</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&amp;display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="layout-overrides.css">
+</head>
+<body>
+  <header class="site-header">
+    <a class="brand" href="#top" aria-label="CopyPaste ana sayfa">
+      <span class="brand-mark">CP</span><span>CopyPaste</span>
+    </a>
+    <nav aria-label="Ana menü">
+      <a href="#features" data-i18n="navFeatures">Özellikler</a>
+      <a href="#workflow" data-i18n="navHow">Nasıl çalışır</a>
+      <a href="https://github.com/EddizEge/CopyPaste">GitHub</a>
+    </nav>
+    <div class="header-actions">
+      <div class="language-switch" aria-label="Dil seçimi">
+        <button type="button" data-language="tr" aria-pressed="true">TR</button>
+        <span>/</span>
+        <button type="button" data-language="en" aria-pressed="false">EN</button>
+      </div>
+      <a class="button button-primary button-small" href="https://github.com/EddizEge/CopyPaste/releases/latest">
+        <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M3 5.2 10.4 4v7.2H3V5.2Zm8.4-1.35L21 2.3v8.9h-9.6V3.85ZM3 12.2h7.4v7.25L3 18.2v-6Zm8.4 0H21v8.95l-9.6-1.55v-7.4Z"/></svg>
+        <span data-i18n="downloadWindows">Windows için indir</span>
+      </a>
+    </div>
+  </header>
+
+  <main id="top">
+    <section class="hero section-shell">
+      <div class="hero-copy">
+        <h1 data-i18n="heroTitle">Dosya kopyalama,<br>kontrolünüz altında.</h1>
+        <p data-i18n="heroBody">Robocopy’nin gücünü modern bir arayüz, akıllı kuyruklar ve SHA-256 doğrulamasıyla kullanın.</p>
+        <div class="hero-actions">
+          <a class="button button-primary" href="https://github.com/EddizEge/CopyPaste/releases/latest">
+            <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M3 5.2 10.4 4v7.2H3V5.2Zm8.4-1.35L21 2.3v8.9h-9.6V3.85ZM3 12.2h7.4v7.25L3 18.2v-6Zm8.4 0H21v8.95l-9.6-1.55v-7.4Z"/></svg>
+            <span data-i18n="downloadWindows">Windows için indir</span>
+          </a>
+          <a class="button button-secondary" href="https://github.com/EddizEge/CopyPaste">
+            <svg aria-hidden="true" viewBox="0 0 24 24"><path fill-rule="evenodd" d="M12 2a10 10 0 0 0-3.16 19.49c.5.09.68-.22.68-.48v-1.87c-2.78.6-3.37-1.18-3.37-1.18-.45-1.16-1.11-1.47-1.11-1.47-.91-.62.07-.61.07-.61 1 .07 1.53 1.03 1.53 1.03.9 1.53 2.35 1.09 2.92.83.09-.65.35-1.09.64-1.34-2.22-.25-4.56-1.11-4.56-4.94 0-1.09.39-1.98 1.03-2.68-.1-.25-.45-1.27.1-2.64 0 0 .84-.27 2.75 1.02A9.6 9.6 0 0 1 12 6.82a9.6 9.6 0 0 1 2.5.34c1.91-1.29 2.75-1.02 2.75-1.02.55 1.37.2 2.39.1 2.64.64.7 1.03 1.59 1.03 2.68 0 3.84-2.34 4.68-4.57 4.93.36.31.68.92.68 1.86V21c0 .27.18.58.69.48A10 10 0 0 0 12 2Z"/></svg>
+            <span data-i18n="viewGithub">GitHub’da görüntüle</span>
+          </a>
+        </div>
+      </div>
+
+      <div class="app-window" aria-label="CopyPaste uygulama önizlemesi">
+        <div class="window-titlebar"><span class="mini-mark">CP</span><span>CopyPaste</span><span class="window-controls">— □ ×</span></div>
+        <div class="window-body">
+          <div class="transfer-form">
+            <label data-i18n="source">Kaynak</label>
+            <div class="path-field">D:\Projeler\Arşiv\2026\Tüm Dosyalar <span>▾</span></div>
+            <label data-i18n="destination">Hedef</label>
+            <div class="path-field">E:\Yedekler\Projeler\Arşiv <span>▾</span></div>
+            <div class="form-actions"><button data-i18n="settings">Ayarlar</button><button class="mock-primary" data-i18n="addQueue">＋ Kuyruğa ekle</button></div>
+          </div>
+          <div class="mock-grid">
+            <div class="queue-panel">
+              <div class="panel-heading"><strong data-i18n="queue">Kuyruk (3)</strong><span data-i18n="pauseAll">Tümünü duraklat</span></div>
+              <div class="queue-row active"><span class="folder-icon"></span><div><strong data-i18n="allFiles">Tüm Dosyalar</strong><small>18,7 GB / 48,2 GB</small><i><b></b></i></div><span>Ⅱ</span></div>
+              <div class="queue-row"><span class="folder-icon"></span><div><strong data-i18n="media">Medya</strong><small data-i18n="waiting">Beklemede</small></div><span>▶</span></div>
+              <div class="queue-row"><span class="folder-icon"></span><div><strong data-i18n="documents">Belgeler</strong><small data-i18n="waiting">Beklemede</small></div><span>▶</span></div>
+            </div>
+            <div class="settings-panel">
+              <div class="panel-heading"><strong data-i18n="settings">Ayarlar</strong></div>
+              <div class="setting-row"><span><strong>SHA-256</strong><small data-i18n="verifyAfter">Kopyalama sonrası doğrula</small></span><i></i></div>
+              <div class="setting-row"><span><strong data-i18n="skipSuccessful">Başarılı kopyaları atla</strong><small data-i18n="skipExisting">Hedefteki aynı dosyaları atla</small></span><i></i></div>
+              <div class="setting-row"><span><strong data-i18n="retryErrors">Hataları yeniden dene</strong><small>3×</small></span><i></i></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="features" class="features section-shell">
+      <div class="route-visual" aria-hidden="true">
+        <div class="route-card source-card"><span>C:\Projeler</span><i></i><i></i><i></i></div>
+        <div class="route-file">▱</div>
+        <div class="route-card target-card"><span>D:\Yedek</span><i></i><i></i><i></i></div>
+        <svg viewBox="0 0 640 520"><path d="M130 120C270 120 205 260 340 260S420 410 540 410"/></svg>
+        <div class="terminal">&gt; robocopy "C:\Projeler" "D:\Yedek"<br><em data-i18n="verificationDone">Doğrulama tamamlandı.</em></div>
+      </div>
+      <div class="features-copy">
+        <h2 data-i18n="featuresTitle">Hız için tasarlandı.<br>Güven için doğrulandı.</h2>
+        <div class="feature-list">
+          <article><span class="line-icon">◴</span><div><h3 data-i18n="featureRobocopy">Robocopy motoru</h3><p data-i18n="featureRobocopyBody">Windows’un yerleşik ve güvenilir kopyalama altyapısı.</p></div></article>
+          <article><span class="line-icon">☷</span><div><h3 data-i18n="featureQueue">Akıllı kuyruk</h3><p data-i18n="featureQueueBody">Transferleri sırala, duraklat, devam ettir veya yeniden dene.</p></div></article>
+          <article><span class="line-icon">◇</span><div><h3 data-i18n="featureVerify">İçerik doğrulama</h3><p data-i18n="featureVerifyBody">Boyut kontrolü ya da SHA-256 ile birebir doğrulama.</p></div></article>
+          <article><span class="line-icon">▣</span><div><h3 data-i18n="featureExplorer">Explorer entegrasyonu</h3><p data-i18n="featureExplorerBody">Sağ tık menüsünden kopyala ve hedefe yapıştır.</p></div></article>
+        </div>
+      </div>
+    </section>
+
+    <section id="workflow" class="workflow section-shell">
+      <h2 data-i18n="workflowTitle">Üç adımda güvenli transfer</h2>
+      <div class="steps">
+        <article><strong>01</strong><span class="step-icon">⌑</span><div><h3 data-i18n="stepOne">Kaynağı seç</h3><p data-i18n="stepOneBody">Kaynak klasörü ve hedef konumu belirleyin.</p></div></article>
+        <article><strong>02</strong><span class="step-icon">☷</span><div><h3 data-i18n="stepTwo">Seçenekleri belirle</h3><p data-i18n="stepTwoBody">Mod, filtre ve doğrulama ayarlarını seçin.</p></div></article>
+        <article><strong>03</strong><span class="step-icon">✓</span><div><h3 data-i18n="stepThree">Kopyala ve doğrula</h3><p data-i18n="stepThreeBody">Transferi başlatın; CopyPaste sonucu doğrulasın.</p></div></article>
+      </div>
+    </section>
+
+    <section class="download section-shell">
+      <div class="download-copy">
+        <h2 data-i18n="downloadTitle">CopyPaste’i şimdi deneyin.</h2>
+        <p data-i18n="downloadBody">Windows 10 ve 11 için. Kurulum gerektirmeyen taşınabilir paket.</p>
+        <div class="hero-actions">
+          <a class="button button-primary" href="https://github.com/EddizEge/CopyPaste/releases/latest" data-i18n="downloadX64">Windows x64 indir</a>
+          <a class="button button-secondary" href="https://github.com/EddizEge/CopyPaste/releases" data-i18n="releaseNotes">Sürüm notları</a>
+        </div>
+        <ul class="trust-list"><li data-i18n="trustRobocopy">Robocopy tabanlı</li><li data-i18n="trustSha">SHA-256 doğrulama</li><li data-i18n="trustOpen">GitHub Releases</li></ul>
+        <p class="update-note" data-i18n="updateNote">↻ Güncellemeler GitHub Releases üzerinden güvenle kontrol edilir.</p>
+      </div>
+      <div class="package-art" aria-hidden="true"><div class="package-window"><span>CopyPaste</span><i></i><i></i><b></b></div><div class="package-box"><span class="brand-mark">CP</span><strong>CopyPaste</strong><small>for Windows</small></div></div>
+    </section>
+
+    <section class="faq section-shell">
+      <h2 data-i18n="faqTitle">Sık sorulanlar</h2>
+      <details><summary data-i18n="faqDelete">CopyPaste dosya siliyor mu?</summary><p data-i18n="faqDeleteAnswer">Hayır. MIR ve PURGE güvenli varsayılanlarda kapalıdır.</p></details>
+      <details><summary data-i18n="faqInternet">İnternet bağlantısı gerekiyor mu?</summary><p data-i18n="faqInternetAnswer">Yalnızca güncelleme kontrolü için; kopyalama tamamen yereldir.</p></details>
+      <details><summary data-i18n="faqMenu">Windows 11 sağ tık menüsü nerede?</summary><p data-i18n="faqMenuAnswer">“Daha fazla seçenek göster” altında.</p></details>
+    </section>
+  </main>
+
+  <footer class="site-footer section-shell">
+    <a class="brand" href="#top"><span class="brand-mark">CP</span><span>CopyPaste</span></a>
+    <p data-i18n="footerText">Windows için hızlı ve güvenilir dosya transferi.</p>
+    <nav><a href="https://github.com/EddizEge/CopyPaste">GitHub</a><a href="https://github.com/EddizEge/CopyPaste/releases" data-i18n="releases">Sürümler</a><a href="https://github.com/EddizEge/CopyPaste#readme" data-i18n="docs">Belgeler</a></nav>
+    <button class="footer-language" type="button"><span>Türkçe</span> / <span>English</span></button>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>
