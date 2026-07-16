@@ -2,7 +2,15 @@
 
 CopyPaste, Windows'un yerleşik Robocopy motorunu modern ve güvenli bir arayüzle sunan dosya transfer uygulamasıdır.
 
-## CopyPaste 1.1
+## CopyPaste 1.2
+
+- Web sitesiyle uyumlu koyu, kart tabanlı ve mor vurgulu yeni arayüz
+- Görev çubuğu, pencere, EXE ve kurulumda kullanılan yeni CopyPaste simgesi
+- Kısmi başarı desteği: az sayıdaki dosya hatası tüm transferi başarısız göstermez
+- Kopyalanamayan dosya, hata nedeni ve hata kodunu uygulama içinde görüntüleme
+- Hatalı öğe listesini kopyalama, günlüğü açma ve transferi yeniden deneme
+- Tek tıkla kurulan, kullanıcı hesabına özel Windows Setup EXE
+- GitHub Releases güncellemelerinde kurulum dosyasını otomatik tercih etme
 
 - Dengeli, En hızlı ve Büyük dosyalar profilleri
 - Yeniden başlatılabilir Robocopy transferleri
@@ -54,7 +62,7 @@ CopyPaste, Windows'un yerleşik Robocopy motorunu modern ve güvenli bir arayüz
 - Geçmişten bir transferi forma geri yükleme ve günlük dosyasını açma
 - Geçmişi uygulama içinden temizleme
 - Bildirim ve aktif işte tepsiye küçültme davranışını ayarlama
-- Taşınabilir, kendi çalışma zamanını içeren Windows x64 yayın paketi
+- Kurulum gerektirmeyen, kendi çalışma zamanını içeren Windows x64 taşınabilir paket
 
 ## Doğrulanan senaryolar
 
@@ -63,6 +71,8 @@ CopyPaste, Windows'un yerleşik Robocopy motorunu modern ve güvenli bir arayüz
 - Kaynak/hedef SHA-256 eşleşmesi
 - Aynı transferi güvenle tekrar çalıştırma
 - İki işlik kuyruğun sıralı tamamlanması
+- On binlerce dosyalı Robocopy çıktısında akış tabanlı hata ayrıştırma
+- Kilitli tek dosyada transferin “hatalarla tamamlandı” sonucuna geçmesi
 
 ## Geliştirme
 
@@ -80,10 +90,12 @@ Dağıtılabilir paketi üretmek için:
 
 ```powershell
 .\tools\Build-Release.ps1
+.\tools\Build-Installer.ps1
 ```
 
-Çıktı `artifacts\CopyPaste-1.1.0-win-x64.zip` altında oluşur. Arşivi bir klasöre çıkarıp
-`CopyPaste.App.exe` dosyasını çalıştırmak yeterlidir. Explorer sağ tık menüsü uygulamadaki
+Önerilen dağıtım dosyası `artifacts\CopyPaste-1.2.0-Setup.exe` kurulumudur. Alternatif olarak
+`artifacts\CopyPaste-1.2.0-win-x64.zip` arşivini bir klasöre çıkarıp `CopyPaste.App.exe`
+dosyasını doğrudan çalıştırabilirsiniz. Explorer sağ tık menüsü uygulamadaki
 “Sağ tık menüsünü ekle” düğmesiyle kullanıcı hesabına kaydedilir; Windows 11'de klasik
 menüler “Daha fazla seçenek göster” altında görüntülenir.
 
@@ -98,7 +110,7 @@ değerini ilk Release oluşturulmadan önce değiştirin.
 - `website` klasörü bağımsız Türkçe/İngilizce tanıtım sayfasıdır.
 - `.github/workflows/pages.yml`, ana dal GitHub'a gönderildiğinde siteyi GitHub Pages'a yayınlar.
 - `.github/workflows/release.yml`, `v*` biçimindeki sürüm etiketi gönderildiğinde testleri çalıştırır,
-  taşınabilir paketi üretir ve GitHub Release'a ekler.
-- Yeni bir sürüm yayımlamak için proje ve manifest sürümünü artırıp `v1.1.0` benzeri aynı sürüm
-  etiketi oluşturun. Uygulama, Release içindeki `CopyPaste-*-win-x64.zip` dosyasını indirme hedefi
-  olarak kullanıcıya sunar.
+  kurulum EXE'si ile taşınabilir paketi üretir ve SHA-256 özetleriyle GitHub Release'a ekler.
+- Yeni bir sürüm yayımlamak için proje ve manifest sürümünü artırıp `v1.2.0` benzeri aynı sürüm
+  etiketi oluşturun. Uygulama öncelikle `CopyPaste-*-Setup.exe`, bulunamazsa taşınabilir ZIP
+  dosyasını indirme hedefi olarak kullanıcıya sunar.

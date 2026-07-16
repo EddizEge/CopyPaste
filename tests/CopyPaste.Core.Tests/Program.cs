@@ -9,9 +9,30 @@ var failures = new List<string>();
 Assert(RobocopyRunner.CreateResult(0).Status == CopyJobStatus.Completed, "Exit 0 başarılı olmalı");
 Assert(RobocopyRunner.CreateResult(1).Status == CopyJobStatus.Completed, "Exit 1 başarılı olmalı");
 Assert(RobocopyRunner.CreateResult(3).Status == CopyJobStatus.CompletedWithWarnings, "Exit 3 uyarılı olmalı");
-Assert(RobocopyRunner.CreateResult(8).Status == CopyJobStatus.Failed, "Exit 8 başarısız olmalı");
+Assert(RobocopyRunner.CreateResult(8).Status == CopyJobStatus.CompletedWithErrors,
+    "Exit 8 hatalarla tamamlandı sayılmalı");
+Assert(RobocopyRunner.CreateResult(16).Status == CopyJobStatus.Failed,
+    "Exit 16 ciddi hata olarak başarısız olmalı");
 Assert(!new RobocopyResult(-1, CopyJobStatus.Cancelled, "iptal").IsSuccessful,
     "İptal sonucu başarılı sayılmamalı");
+
+var partialOutput = new[]
+{
+    @"2026/07/17 09:15:32 ERROR 5 (0x00000005) Copying File C:\Arşiv\kilitli-rapor.xlsx",
+    "Access is denied.",
+    @"2026/07/17 09:15:33 ERROR 32 (0x00000020) Copying File C:\Arşiv\kullanımda.pst",
+    "The process cannot access the file because it is being used by another process.",
+    "   Files :     86448     86443         3         0         2         0"
+};
+var partialAnalysis = RobocopyOutputAnalyzer.Analyze(partialOutput);
+var partialResult = RobocopyRunner.CreateResult(8, partialAnalysis);
+Assert(partialAnalysis.CopiedFileCount == 86443
+       && partialAnalysis.FailedItemCount == 2
+       && partialAnalysis.Failures.Count == 2,
+    "Robocopy özeti ve kopyalanamayan dosyalar ayrıştırılmalı");
+Assert(partialResult.Status == CopyJobStatus.CompletedWithErrors
+       && partialResult.Summary.Contains("2 öğe"),
+    "Kısmi hata özeti kullanıcıya doğru sayıyı göstermeli");
 Assert(GitHubUpdateService.TryParseVersion("v1.2.3-beta.1", out var parsedVersion)
        && parsedVersion == new Version(1, 2, 3, 0),
     "GitHub sürüm etiketleri güvenli biçimde ayrıştırılmalı");
@@ -22,6 +43,10 @@ var releaseJson = """
   "html_url": "https://github.com/EddizEge/CopyPaste/releases/tag/v1.2.0",
   "body": "Yeni özellikler",
   "assets": [
+    {
+      "name": "CopyPaste-1.2.0-Setup.exe",
+      "browser_download_url": "https://github.com/EddizEge/CopyPaste/releases/download/v1.2.0/CopyPaste-1.2.0-Setup.exe"
+    },
     {
       "name": "CopyPaste-1.2.0-win-x64.zip",
       "browser_download_url": "https://github.com/EddizEge/CopyPaste/releases/download/v1.2.0/CopyPaste-1.2.0-win-x64.zip"
@@ -34,8 +59,8 @@ var updateService = new GitHubUpdateService(updateClient);
 var availableUpdate = await updateService.CheckAsync(new Version(1, 1, 0));
 Assert(availableUpdate.HasUpdate
        && availableUpdate.LatestVersion == new Version(1, 2, 0, 0)
-       && availableUpdate.DownloadUri?.AbsoluteUri.EndsWith("CopyPaste-1.2.0-win-x64.zip") == true,
-    "Yeni GitHub Release ve taşınabilir paket bulunmalı");
+       && availableUpdate.DownloadUri?.AbsoluteUri.EndsWith("CopyPaste-1.2.0-Setup.exe") == true,
+    "Yeni GitHub Release içinde kurulum dosyası ZIP paketine tercih edilmeli");
 var currentUpdate = await updateService.CheckAsync(new Version(1, 2, 0));
 Assert(currentUpdate.Status == UpdateCheckStatus.UpToDate,
     "Aynı sürüm güncel kabul edilmeli");
@@ -154,6 +179,37 @@ try
     var runner = new RobocopyRunner();
     var result = await runner.RunAsync(job);
     Assert(result.IsSuccessful, $"Gerçek Robocopy transferi başarılı olmalı (kod: {result.ExitCode})");
+
+    var partialSource = tempSource + "-partial";
+    var partialDestination = tempDestination + "-partial";
+    Directory.CreateDirectory(partialSource);
+    try
+    {
+        await File.WriteAllTextAsync(Path.Combine(partialSource, "başarılı.txt"), "kopyalanabilir");
+        var lockedPath = Path.Combine(partialSource, "kullanımda.txt");
+        await File.WriteAllTextAsync(lockedPath, "kilitli");
+        var partialJob = new CopyJob
+        {
+            SourcePath = partialSource,
+            DestinationPath = partialDestination,
+            Profile = new CopyProfile("partial-qa", "Kısmi hata testi", "", 1, false, 0, 0)
+        };
+        using (new FileStream(lockedPath, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+        {
+            var livePartialResult = await runner.RunAsync(partialJob);
+            Assert(livePartialResult.Status == CopyJobStatus.CompletedWithErrors,
+                $"Gerçek Robocopy kısmi hatası doğru sınıflanmalı (kod: {livePartialResult.ExitCode})");
+            Assert(livePartialResult.FailedItemCount >= 1 && livePartialResult.Failures?.Count >= 1,
+                "Gerçek Robocopy çıktısından kilitli dosya ayrıntısı alınmalı");
+        }
+    }
+    finally
+    {
+        if (Directory.Exists(partialSource))
+            Directory.Delete(partialSource, true);
+        if (Directory.Exists(partialDestination))
+            Directory.Delete(partialDestination, true);
+    }
 
     foreach (var sourceFile in Directory.EnumerateFiles(tempSource, "*", SearchOption.AllDirectories))
     {

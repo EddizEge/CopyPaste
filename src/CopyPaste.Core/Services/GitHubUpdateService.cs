@@ -120,7 +120,9 @@ public sealed class GitHubUpdateService
 
         var tagName = tagElement.GetString();
         var releasePage = TryGetUri(root, "html_url");
-        var download = FindPortableAsset(root) ?? releasePage;
+        var download = FindReleaseAsset(root, ProductInfo.InstallerAssetSuffix)
+            ?? FindReleaseAsset(root, ProductInfo.PortableAssetSuffix)
+            ?? releasePage;
         var releaseNotes = root.TryGetProperty("body", out var body) ? body.GetString() : null;
         var status = latestVersion > NormalizeVersion(currentVersion)
             ? UpdateCheckStatus.UpdateAvailable
@@ -129,7 +131,7 @@ public sealed class GitHubUpdateService
             releasePage, download, releaseNotes);
     }
 
-    private static Uri? FindPortableAsset(JsonElement root)
+    private static Uri? FindReleaseAsset(JsonElement root, string suffix)
     {
         if (!root.TryGetProperty("assets", out var assets) || assets.ValueKind != JsonValueKind.Array)
             return null;
@@ -137,7 +139,7 @@ public sealed class GitHubUpdateService
         foreach (var asset in assets.EnumerateArray())
         {
             var name = asset.TryGetProperty("name", out var nameElement) ? nameElement.GetString() : null;
-            if (name?.EndsWith(ProductInfo.PortableAssetSuffix, StringComparison.OrdinalIgnoreCase) != true)
+            if (name?.EndsWith(suffix, StringComparison.OrdinalIgnoreCase) != true)
                 continue;
             var uri = TryGetUri(asset, "browser_download_url");
             if (uri is not null)

@@ -28,17 +28,23 @@ public sealed class AppNotificationService : IDisposable
         }
     }
 
-    public bool ShowTransferSummary(int completedCount, int failedCount)
+    public bool ShowTransferSummary(int completedCount, int partialCount, int failedCount)
     {
         if (!IsAvailable)
             return false;
 
         try
         {
-            var title = failedCount == 0 ? "Transferler tamamlandı" : "Transfer kuyruğu tamamlandı";
-            var body = failedCount == 0
-                ? $"{completedCount} iş başarıyla tamamlandı."
-                : $"{completedCount} iş tamamlandı, {failedCount} iş başarısız oldu.";
+            var title = failedCount > 0
+                ? "Transfer kuyruğunda başarısız işler var"
+                : partialCount > 0
+                    ? "Transferler hatalarla tamamlandı"
+                    : "Transferler tamamlandı";
+            var body = failedCount > 0
+                ? $"{completedCount} iş tamamlandı, {partialCount} işte dosya hatası, {failedCount} başarısız iş var."
+                : partialCount > 0
+                    ? $"{completedCount} iş tamamlandı; {partialCount} işte kopyalanamayan dosyalar var."
+                    : $"{completedCount} iş başarıyla tamamlandı.";
 
             var notification = new AppNotificationBuilder()
                 .AddArgument("action", "open")

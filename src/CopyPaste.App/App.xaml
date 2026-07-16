@@ -7,12 +7,53 @@
             <ResourceDictionary.MergedDictionaries>
                 <XamlControlsResources xmlns="using:Microsoft.UI.Xaml.Controls" />
             </ResourceDictionary.MergedDictionaries>
+            <SolidColorBrush x:Key="PageBrush" Color="#0B0C10" />
+            <SolidColorBrush x:Key="CardBrush" Color="#14171D" />
+            <SolidColorBrush x:Key="CardStrongBrush" Color="#191D25" />
+            <SolidColorBrush x:Key="FieldBrush" Color="#1E222B" />
+            <SolidColorBrush x:Key="StrokeBrush" Color="#303541" />
+            <SolidColorBrush x:Key="MutedBrush" Color="#9DA5B5" />
+            <SolidColorBrush x:Key="AccentBrush" Color="#6D5DFB" />
             <Style x:Key="CardStyle" TargetType="Border">
-                <Setter Property="Background" Value="{ThemeResource CardBackgroundFillColorDefaultBrush}" />
-                <Setter Property="BorderBrush" Value="{ThemeResource CardStrokeColorDefaultBrush}" />
+                <Setter Property="Background" Value="{StaticResource CardBrush}" />
+                <Setter Property="BorderBrush" Value="{StaticResource StrokeBrush}" />
                 <Setter Property="BorderThickness" Value="1" />
-                <Setter Property="CornerRadius" Value="16" />
-                <Setter Property="Padding" Value="20" />
+                <Setter Property="CornerRadius" Value="14" />
+                <Setter Property="Padding" Value="18" />
+            </Style>
+            <Style x:Key="PrimaryButtonStyle" TargetType="Button">
+                <Setter Property="Background" Value="{StaticResource AccentBrush}" />
+                <Setter Property="Foreground" Value="White" />
+                <Setter Property="BorderThickness" Value="0" />
+                <Setter Property="CornerRadius" Value="7" />
+                <Setter Property="Padding" Value="18,10" />
+                <Setter Property="MinHeight" Value="40" />
+                <Setter Property="FontWeight" Value="SemiBold" />
+            </Style>
+            <Style x:Key="QuietButtonStyle" TargetType="Button">
+                <Setter Property="Background" Value="#20242C" />
+                <Setter Property="Foreground" Value="#E8EAF0" />
+                <Setter Property="BorderBrush" Value="#373C48" />
+                <Setter Property="BorderThickness" Value="1" />
+                <Setter Property="CornerRadius" Value="7" />
+                <Setter Property="Padding" Value="14,9" />
+                <Setter Property="MinHeight" Value="38" />
+            </Style>
+            <Style x:Key="PathTextBoxStyle" TargetType="TextBox">
+                <Setter Property="Background" Value="{StaticResource FieldBrush}" />
+                <Setter Property="BorderBrush" Value="#363C49" />
+                <Setter Property="BorderThickness" Value="1" />
+                <Setter Property="CornerRadius" Value="7" />
+                <Setter Property="MinHeight" Value="42" />
+            </Style>
+            <Style x:Key="SectionTitleStyle" TargetType="TextBlock">
+                <Setter Property="Foreground" Value="White" />
+                <Setter Property="FontSize" Value="18" />
+                <Setter Property="FontWeight" Value="SemiBold" />
+            </Style>
+            <Style x:Key="MutedTextStyle" TargetType="TextBlock">
+                <Setter Property="Foreground" Value="{StaticResource MutedBrush}" />
+                <Setter Property="FontSize" Value="12" />
             </Style>
         </ResourceDictionary>
     </Application.Resources>

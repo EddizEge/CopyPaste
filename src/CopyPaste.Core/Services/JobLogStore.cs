@@ -28,6 +28,11 @@ public sealed class JobLogStore
             $"Bitiş: {job.CompletedAt:O}",
             $"Durum: {job.Status}",
             $"Robocopy çıkış kodu: {job.ExitCode}",
+            $"Kopyalanamayan öğe: {job.FailedItemCount}",
+            job.Failures.Count == 0
+                ? "Kopyalanamayan öğe ayrıntısı: yok"
+                : "Kopyalanamayan öğeler: " + string.Join(" | ",
+                    job.Failures.Select(failure => $"{failure.Path} — {failure.Reason}")),
             string.Empty,
             "--- Robocopy çıktısı ---"
         };

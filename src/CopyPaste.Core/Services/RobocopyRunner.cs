@@ -16,6 +16,7 @@ public sealed partial class RobocopyRunner
         using var process = new Process { StartInfo = RobocopyCommandBuilder.Build(job) };
         job.Status = CopyJobStatus.Running;
         job.StartedAt ??= DateTimeOffset.Now;
+        var outputAnalyzer = new RobocopyOutputAnalyzer();
 
         try
         {
@@ -32,13 +33,19 @@ public sealed partial class RobocopyRunner
                 catch (InvalidOperationException) { }
             });
 
-            var outputTask = ReadOutputAsync(process.StandardOutput, progress, logLine, cancellationToken);
-            var errorTask = ReadOutputAsync(process.StandardError, progress, logLine, cancellationToken);
+            void ObserveLine(string line)
+            {
+                outputAnalyzer.Observe(line);
+                logLine?.Invoke(line);
+            }
+
+            var outputTask = ReadOutputAsync(process.StandardOutput, progress, ObserveLine, cancellationToken);
+            var errorTask = ReadOutputAsync(process.StandardError, progress, ObserveLine, cancellationToken);
             await process.WaitForExitAsync(CancellationToken.None).ConfigureAwait(false);
             await Task.WhenAll(outputTask, errorTask).ConfigureAwait(false);
 
             cancellationToken.ThrowIfCancellationRequested();
-            return CreateResult(process.ExitCode);
+            return CreateResult(process.ExitCode, outputAnalyzer.BuildSummary());
         }
         catch (OperationCanceledException)
         {
@@ -52,13 +59,33 @@ public sealed partial class RobocopyRunner
         }
     }
 
-    public static RobocopyResult CreateResult(int exitCode) => exitCode switch
+    public static RobocopyResult CreateResult(
+        int exitCode,
+        RobocopyExecutionSummary? execution = null) => exitCode switch
     {
         0 => new(exitCode, CopyJobStatus.Completed, "Hedef zaten güncel; kopyalanacak dosya yok."),
         1 => new(exitCode, CopyJobStatus.Completed, "Tüm dosyalar başarıyla kopyalandı."),
         < 8 => new(exitCode, CopyJobStatus.CompletedWithWarnings, "Kopyalama tamamlandı; hedefte ek veya farklı dosyalar bulundu."),
-        _ => new(exitCode, CopyJobStatus.Failed, "Bir veya daha fazla dosya kopyalanamadı.")
+        < 16 => CreatePartialResult(exitCode, execution),
+        _ => new(exitCode, CopyJobStatus.Failed,
+            "Robocopy ciddi bir hata nedeniyle transferi tamamlayamadı.",
+            execution?.Failures,
+            execution?.FailedItemCount ?? 0)
     };
+
+    private static RobocopyResult CreatePartialResult(
+        int exitCode,
+        RobocopyExecutionSummary? execution)
+    {
+        var failedCount = execution?.FailedItemCount ?? 0;
+        var countText = failedCount > 0 ? $"{failedCount:N0} öğe" : "Bazı öğeler";
+        return new RobocopyResult(
+            exitCode,
+            CopyJobStatus.CompletedWithErrors,
+            $"İşlem hatalarla birlikte tamamlandı. {countText} kopyalanamadı; diğer dosyalar başarıyla işlendi.",
+            execution?.Failures,
+            failedCount);
+    }
 
     private static async Task ReadOutputAsync(
         StreamReader reader,

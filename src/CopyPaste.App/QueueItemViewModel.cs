@@ -78,6 +78,8 @@ public sealed class QueueItemViewModel : INotifyPropertyChanged
         Job.ExitCode = null;
         Job.CompletedAt = null;
         Job.Summary = null;
+        Job.FailedItemCount = 0;
+        Job.Failures.Clear();
         StatusLabel = "Bekliyor";
         Detail = $"{Preflight.FileCount:N0} dosya • {FormatBytes(Preflight.TotalBytes)} • " +
                  $"{Job.Profile.Name} • {OptionsLabel(Job.Options)}";
@@ -90,10 +92,11 @@ public sealed class QueueItemViewModel : INotifyPropertyChanged
         {
             CopyJobStatus.Completed => "Tamamlandı",
             CopyJobStatus.CompletedWithWarnings => "Uyarılarla tamamlandı",
+            CopyJobStatus.CompletedWithErrors => "Hatalarla tamamlandı",
             CopyJobStatus.Cancelled => "İptal edildi",
             _ => "Başarısız"
         };
-        Progress = result.IsSuccessful ? 100 : Progress;
+        Progress = result.IsFinished ? 100 : Progress;
         Detail = result.Summary;
     }
 

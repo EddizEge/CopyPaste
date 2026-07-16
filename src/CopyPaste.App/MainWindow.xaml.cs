@@ -36,6 +36,7 @@ public sealed partial class MainWindow : Window
     private AppSettings _settings = new();
     private Uri? _availableUpdateUri;
     private bool _isUpdateCheckRunning;
+    private CopyJob? _lastResultJob;
 
     public MainWindow(ShellLaunchRequest? shellRequest = null, AppNotificationService? notificationService = null)
     {
@@ -44,6 +45,11 @@ public sealed partial class MainWindow : Window
         _trayIcon = new TrayIconService(this);
         var windowId = Microsoft.UI.Win32Interop.GetWindowIdFromWindow(WindowNative.GetWindowHandle(this));
         _appWindow = AppWindow.GetFromWindowId(windowId);
+        ExtendsContentIntoTitleBar = true;
+        SetTitleBar(AppTitleBar);
+        _appWindow.TitleBar.ButtonBackgroundColor = Microsoft.UI.Colors.Transparent;
+        _appWindow.TitleBar.ButtonInactiveBackgroundColor = Microsoft.UI.Colors.Transparent;
+        _appWindow.Resize(new Windows.Graphics.SizeInt32(1380, 880));
         _appWindow.Closing += AppWindow_Closing;
         Closed += MainWindow_Closed;
         ProfileComboBox.ItemsSource = CopyProfiles.All;
@@ -108,7 +114,7 @@ public sealed partial class MainWindow : Window
         try
         {
             var currentVersion = Assembly.GetExecutingAssembly().GetName().Version
-                ?? new Version(1, 1, 0, 0);
+                ?? new Version(1, 2, 0, 0);
             var result = await _updateService.CheckAsync(currentVersion);
             switch (result.Status)
             {
@@ -339,6 +345,8 @@ public sealed partial class MainWindow : Window
             item.Job.ExitCode = result.ExitCode;
             item.Job.Status = result.Status;
             item.Job.Summary = result.Summary;
+            item.Job.FailedItemCount = result.FailedItemCount;
+            item.Job.Failures = result.Failures?.ToList() ?? [];
             item.Job.CompletedAt = DateTimeOffset.Now;
             if (result.Status == CopyJobStatus.Paused)
                 item.SetPaused();
@@ -373,9 +381,10 @@ public sealed partial class MainWindow : Window
         SetRunningState(false);
         UpdateQueueState();
         var completedCount = pendingItems.Count(item => item.Job.Status is CopyJobStatus.Completed or CopyJobStatus.CompletedWithWarnings);
+        var partialCount = pendingItems.Count(item => item.Job.Status == CopyJobStatus.CompletedWithErrors);
         var failedCount = pendingItems.Count(item => item.Job.Status == CopyJobStatus.Failed);
         if (!_pauseRequested && _settings.NotificationsEnabled)
-            _notificationService.ShowTransferSummary(completedCount, failedCount);
+            _notificationService.ShowTransferSummary(completedCount, partialCount, failedCount);
         _copyCancellation?.Dispose();
         _copyCancellation = null;
     }
@@ -725,12 +734,16 @@ public sealed partial class MainWindow : Window
         ProgressCard.Visibility = Visibility.Visible;
         CancelButton.Visibility = Visibility.Collapsed;
         CopyProgressBar.IsIndeterminate = false;
-        CopyProgressBar.Value = job.Status is CopyJobStatus.Completed or CopyJobStatus.CompletedWithWarnings ? 100 : 0;
-        PercentageText.Text = job.Status is CopyJobStatus.Completed or CopyJobStatus.CompletedWithWarnings ? "100%" : "—";
+        var finished = job.Status is CopyJobStatus.Completed
+            or CopyJobStatus.CompletedWithWarnings
+            or CopyJobStatus.CompletedWithErrors;
+        CopyProgressBar.Value = finished ? 100 : 0;
+        PercentageText.Text = finished ? "100%" : "—";
         StatusText.Text = job.Status switch
         {
             CopyJobStatus.Completed => "Transfer tamamlandı",
             CopyJobStatus.CompletedWithWarnings => "Uyarılarla tamamlandı",
+            CopyJobStatus.CompletedWithErrors => "İşlem hatalarla birlikte tamamlandı",
             CopyJobStatus.Cancelled => "Transfer iptal edildi",
             CopyJobStatus.Paused => "Transfer duraklatıldı",
             _ => "Transfer başarısız"
@@ -738,6 +751,7 @@ public sealed partial class MainWindow : Window
         CurrentFileText.Text = job.Summary;
         LastJobTitle.Text = StatusText.Text;
         LastJobDetails.Text = $"{job.SourcePath} → {job.DestinationPath}\n{job.Summary}";
+        ShowFailureDetails(job);
     }
 
     private async Task LoadHistoryAsync()
@@ -748,6 +762,7 @@ public sealed partial class MainWindow : Window
 
         LastJobTitle.Text = GetStatusLabel(job.Status);
         LastJobDetails.Text = $"{job.SourcePath} → {job.DestinationPath}\n{job.Summary}";
+        ShowFailureDetails(job);
     }
 
     private void UpdateQueueState()
@@ -766,7 +781,10 @@ public sealed partial class MainWindow : Window
         MoveDownButton.IsEnabled = !_isQueueRunning && selectedIndex >= 0 && selectedIndex < _queue.Count - 1;
         RemoveQueueItemButton.IsEnabled = !_isQueueRunning && selected is not null;
         RetryButton.IsEnabled = !_isQueueRunning
-            && selected?.Job.Status is CopyJobStatus.Failed or CopyJobStatus.Cancelled or CopyJobStatus.Paused;
+            && selected?.Job.Status is CopyJobStatus.CompletedWithErrors
+                or CopyJobStatus.Failed
+                or CopyJobStatus.Cancelled
+                or CopyJobStatus.Paused;
     }
 
     private static string GetStatusLabel(CopyJobStatus status) => status switch
@@ -776,9 +794,66 @@ public sealed partial class MainWindow : Window
         CopyJobStatus.Paused => "Duraklatıldı",
         CopyJobStatus.Completed => "Tamamlandı",
         CopyJobStatus.CompletedWithWarnings => "Uyarılarla tamamlandı",
+        CopyJobStatus.CompletedWithErrors => "Hatalarla tamamlandı",
         CopyJobStatus.Cancelled => "İptal edildi",
         _ => "Başarısız"
     };
+
+    private void ShowFailureDetails(CopyJob job)
+    {
+        _lastResultJob = job;
+        var hasFailures = job.FailedItemCount > 0 || job.Failures.Count > 0;
+        FailedItemsCard.Visibility = hasFailures ? Visibility.Visible : Visibility.Collapsed;
+        if (!hasFailures)
+        {
+            FailedItemsListView.ItemsSource = null;
+            return;
+        }
+
+        FailedItemsCountText.Text = $"Kopyalanamayan öğeler ({Math.Max(job.FailedItemCount, job.Failures.Count):N0})";
+        FailedItemsListView.ItemsSource = job.Failures;
+        OpenFailureLogButton.IsEnabled = !string.IsNullOrWhiteSpace(job.LogPath) && File.Exists(job.LogPath);
+    }
+
+    private void CopyFailuresButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_lastResultJob?.Failures.Count is not > 0)
+            return;
+
+        var text = string.Join(Environment.NewLine,
+            _lastResultJob.Failures.Select(failure =>
+                $"{failure.Path}\t{failure.Reason}"));
+        var package = new DataPackage();
+        package.SetText(text);
+        Clipboard.SetContent(package);
+        FailureActionText.Text = "Liste panoya kopyalandı.";
+    }
+
+    private void OpenFailureLogButton_Click(object sender, RoutedEventArgs e) =>
+        OpenLog(_lastResultJob?.LogPath);
+
+    private async void RetryFailedButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_lastResultJob is null || _isQueueRunning)
+            return;
+
+        var item = _queue.FirstOrDefault(candidate => candidate.Job.Id == _lastResultJob.Id);
+        if (item is null)
+        {
+            LoadJobIntoForm(_lastResultJob);
+            if (!await AddCurrentTransferToQueueAsync())
+                return;
+            item = _queue[^1];
+        }
+        else
+        {
+            item.ResetForRetry();
+        }
+
+        QueueListView.SelectedItem = item;
+        UpdateQueueState();
+        await RunQueueAsync();
+    }
 
     private sealed record OptionChoice<T>(T Value, string Label);
     private sealed record HistoryChoice(CopyJob Job, string Label);

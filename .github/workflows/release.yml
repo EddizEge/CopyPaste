@@ -23,10 +23,24 @@ jobs:
       - name: Build portable package
         shell: pwsh
         run: ./tools/Build-Release.ps1
+      - name: Install Inno Setup
+        shell: pwsh
+        run: choco install innosetup --yes --no-progress
+      - name: Build Windows installer
+        shell: pwsh
+        run: ./tools/Build-Installer.ps1
       - name: Create GitHub Release
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           $zip = Get-Item "artifacts/CopyPaste-*-win-x64.zip" | Sort-Object LastWriteTime -Descending | Select-Object -First 1
-          gh release create "${{ github.ref_name }}" $zip.FullName --generate-notes --title "CopyPaste ${{ github.ref_name }}"
+          $setup = Get-Item "artifacts/CopyPaste-*-Setup.exe" | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+          $files = @($setup, $zip)
+          $checksums = foreach ($file in $files) {
+            $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $file.FullName).Hash.ToLowerInvariant()
+            "$hash  $($file.Name)"
+          }
+          $checksumPath = Join-Path $PWD "artifacts/SHA256SUMS.txt"
+          $checksums | Set-Content -LiteralPath $checksumPath -Encoding utf8
+          gh release create "${{ github.ref_name }}" $setup.FullName $zip.FullName $checksumPath --generate-notes --title "CopyPaste ${{ github.ref_name }}"
