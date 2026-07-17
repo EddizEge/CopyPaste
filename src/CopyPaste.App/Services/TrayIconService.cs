@@ -46,7 +46,7 @@ public sealed class TrayIconService : IDisposable
             uID = 1,
             uFlags = NifMessage | NifIcon | NifTip,
             uCallbackMessage = CallbackMessage,
-            hIcon = LoadIcon(nint.Zero, new nint(IdiApplication)),
+            hIcon = LoadApplicationIcon(),
             szTip = "CopyPaste — pencereyi açmak için tıklayın",
             uVersionOrTimeout = NotifyIconVersion4,
             szInfo = string.Empty,
@@ -82,6 +82,19 @@ public sealed class TrayIconService : IDisposable
         _iconVisible = true;
         ShellNotifyIcon(NimSetVersion, ref _iconData);
         return true;
+    }
+
+    private static nint LoadApplicationIcon()
+    {
+        var executable = Environment.ProcessPath;
+        if (!string.IsNullOrWhiteSpace(executable))
+        {
+            var large = new nint[1];
+            var small = new nint[1];
+            if (ExtractIconEx(executable, 0, large, small, 1) > 0)
+                return small[0] != nint.Zero ? small[0] : large[0];
+        }
+        return LoadIcon(nint.Zero, new nint(IdiApplication));
     }
 
     private void RemoveIcon()
@@ -145,6 +158,9 @@ public sealed class TrayIconService : IDisposable
 
     [DllImport("user32.dll", CharSet = CharSet.Unicode, EntryPoint = "LoadIconW")]
     private static extern nint LoadIcon(nint instance, nint iconName);
+
+    [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
+    private static extern uint ExtractIconEx(string file, int iconIndex, nint[] largeIcons, nint[] smallIcons, uint icons);
 
     [DllImport("user32.dll", EntryPoint = "SetWindowLongPtrW")]
     private static extern nint SetWindowLongPtr(nint hwnd, int index, nint newLong);

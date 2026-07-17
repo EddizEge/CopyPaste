@@ -1,5 +1,16 @@
 # Değişiklik günlüğü
 
+## 1.3.0
+
+- Hatalı dosya bazlı yeniden deneme ve Türkçe dosya adları için OEM Robocopy çıktı düzeltmesi.
+- SHA-256 zorunlu güvenli güncelleme indirme ve kurulum başlatma.
+- Çökme sonrası kuyruk kurtarma, aktif işte çıkış koruması ve tanılama paketi.
+- Favoriler, son kullanılan klasörler, özel profiller ve Türkçe/İngilizce arayüz.
+- Canlı hız, tahmini kalan süre, HTML/CSV raporlar ve NAS bağlantı kurtarma.
+- Windows Görev Zamanlayıcı ile günlük işler ve çoklu Explorer klasörü desteği.
+- İmzalı MSIX için `IExplorerCommand` tabanlı Windows 11 modern sağ tık komutları.
+- İsteğe bağlı Authenticode/MSIX kod imzalama GitHub Actions hattı.
+
 ## 1.2.0
 
 - Web sitesiyle aynı görsel dili kullanan yeni koyu arayüz ve yeni uygulama logosu.

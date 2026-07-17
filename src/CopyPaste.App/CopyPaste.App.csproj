@@ -18,15 +18,23 @@
     <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <Version>1.2.0</Version>
-    <AssemblyVersion>1.2.0.0</AssemblyVersion>
-    <FileVersion>1.2.0.0</FileVersion>
+    <Version>1.3.0</Version>
+    <AssemblyVersion>1.3.0.0</AssemblyVersion>
+    <FileVersion>1.3.0.0</FileVersion>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.8.260508005" />
     <ProjectReference Include="..\CopyPaste.Core\CopyPaste.Core.csproj" />
+    <ProjectReference Include="..\CopyPaste.ExplorerCommand\CopyPaste.ExplorerCommand.csproj"
+                      ReferenceOutputAssembly="false" />
   </ItemGroup>
   <ItemGroup>
     <Content Include="Assets\*.png" />
+    <Content Include="..\CopyPaste.ExplorerCommand\bin\$(Platform)\$(Configuration)\net8.0-windows10.0.19041.0\CopyPaste.ExplorerCommand.dll"
+             Link="CopyPaste.ExplorerCommand.dll" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="..\CopyPaste.ExplorerCommand\bin\$(Platform)\$(Configuration)\net8.0-windows10.0.19041.0\CopyPaste.ExplorerCommand.deps.json"
+             Link="CopyPaste.ExplorerCommand.deps.json" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="..\CopyPaste.ExplorerCommand\bin\$(Platform)\$(Configuration)\net8.0-windows10.0.19041.0\CopyPaste.ExplorerCommand.runtimeconfig.json"
+             Link="CopyPaste.ExplorerCommand.runtimeconfig.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

@@ -23,12 +23,58 @@ jobs:
       - name: Build portable package
         shell: pwsh
         run: ./tools/Build-Release.ps1
+      - name: Sign application when certificate is configured
+        shell: pwsh
+        env:
+          WINDOWS_CERTIFICATE_BASE64: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:WINDOWS_CERTIFICATE_BASE64)) {
+            Write-Host "Signing certificate is not configured; producing unsigned artifacts."
+            exit 0
+          }
+          $certificate = Join-Path $env:RUNNER_TEMP "CopyPaste-signing.pfx"
+          [IO.File]::WriteAllBytes($certificate, [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE_BASE64))
+          $publish = Get-Item "artifacts/CopyPaste-*-win-x64" | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+          ./tools/Sign-Artifacts.ps1 -Paths (Join-Path $publish.FullName "CopyPaste.App.exe") `
+            -CertificatePath $certificate -CertificatePassword $env:WINDOWS_CERTIFICATE_PASSWORD
+          $zip = "$($publish.FullName).zip"
+          Remove-Item -LiteralPath $zip -Force
+          Compress-Archive -Path (Join-Path $publish.FullName "*") -DestinationPath $zip -CompressionLevel Optimal
+          Remove-Item -LiteralPath $certificate -Force
       - name: Install Inno Setup
         shell: pwsh
         run: choco install innosetup --yes --no-progress
       - name: Build Windows installer
         shell: pwsh
         run: ./tools/Build-Installer.ps1
+      - name: Sign installer when certificate is configured
+        shell: pwsh
+        env:
+          WINDOWS_CERTIFICATE_BASE64: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:WINDOWS_CERTIFICATE_BASE64)) { exit 0 }
+          $certificate = Join-Path $env:RUNNER_TEMP "CopyPaste-signing.pfx"
+          [IO.File]::WriteAllBytes($certificate, [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE_BASE64))
+          $setup = Get-Item "artifacts/CopyPaste-*-Setup.exe" | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+          ./tools/Sign-Artifacts.ps1 -Paths $setup.FullName -CertificatePath $certificate `
+            -CertificatePassword $env:WINDOWS_CERTIFICATE_PASSWORD
+          Remove-Item -LiteralPath $certificate -Force
+      - name: Build signed MSIX with modern Windows 11 context menu
+        shell: pwsh
+        env:
+          WINDOWS_CERTIFICATE_BASE64: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:WINDOWS_CERTIFICATE_BASE64)) {
+            Write-Host "Signing certificate is not configured; skipping installable MSIX."
+            exit 0
+          }
+          $certificate = Join-Path $env:RUNNER_TEMP "CopyPaste-msix.pfx"
+          [IO.File]::WriteAllBytes($certificate, [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE_BASE64))
+          ./tools/Build-Msix.ps1 -CertificatePath $certificate -CertificatePassword $env:WINDOWS_CERTIFICATE_PASSWORD
+          Remove-Item -LiteralPath $certificate -Force
       - name: Create GitHub Release
         shell: pwsh
         env:
@@ -36,11 +82,13 @@ jobs:
         run: |
           $zip = Get-Item "artifacts/CopyPaste-*-win-x64.zip" | Sort-Object LastWriteTime -Descending | Select-Object -First 1
           $setup = Get-Item "artifacts/CopyPaste-*-Setup.exe" | Sort-Object LastWriteTime -Descending | Select-Object -First 1
-          $files = @($setup, $zip)
+          $msix = Get-Item "artifacts/CopyPaste-*-x64.msix" -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+          $files = @($setup, $zip) + @($msix | Where-Object { $_ })
           $checksums = foreach ($file in $files) {
             $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $file.FullName).Hash.ToLowerInvariant()
             "$hash  $($file.Name)"
           }
           $checksumPath = Join-Path $PWD "artifacts/SHA256SUMS.txt"
           $checksums | Set-Content -LiteralPath $checksumPath -Encoding utf8
-          gh release create "${{ github.ref_name }}" $setup.FullName $zip.FullName $checksumPath --generate-notes --title "CopyPaste ${{ github.ref_name }}"
+          $releaseAssets = @($files.FullName) + $checksumPath
+          gh release create "${{ github.ref_name }}" @releaseAssets --generate-notes --title "CopyPaste ${{ github.ref_name }}"

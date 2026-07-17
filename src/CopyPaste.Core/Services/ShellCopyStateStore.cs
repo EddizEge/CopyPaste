@@ -14,27 +14,42 @@ public sealed class ShellCopyStateStore
         _filePath = Path.Combine(root, "shell-copy.json");
     }
 
-    public void SaveSource(string sourcePath)
+    public void SaveSource(string sourcePath) => SaveSources([sourcePath]);
+
+    public void SaveSources(IEnumerable<string> sourcePaths)
     {
-        var state = new ShellCopyState(Path.GetFullPath(sourcePath), DateTimeOffset.Now);
+        var paths = sourcePaths.Select(Path.GetFullPath).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        var state = new ShellCopyState(paths, DateTimeOffset.Now);
         File.WriteAllText(_filePath, JsonSerializer.Serialize(state));
     }
 
-    public string? LoadSource()
+    public string? LoadSource() => LoadSources().FirstOrDefault();
+
+    public IReadOnlyList<string> LoadSources()
     {
         if (!File.Exists(_filePath))
-            return null;
+            return [];
 
         try
         {
-            var state = JsonSerializer.Deserialize<ShellCopyState>(File.ReadAllText(_filePath));
-            return state is not null && Directory.Exists(state.SourcePath) ? state.SourcePath : null;
+            using var document = JsonDocument.Parse(File.ReadAllText(_filePath));
+            var root = document.RootElement;
+            IEnumerable<string?> paths = root.TryGetProperty("SourcePaths", out var sourcePaths)
+                && sourcePaths.ValueKind == JsonValueKind.Array
+                ? sourcePaths.EnumerateArray().Select(item => item.GetString())
+                : root.TryGetProperty("SourcePath", out var legacyPath)
+                    ? [legacyPath.GetString()]
+                    : [];
+            return paths.Where(path => !string.IsNullOrWhiteSpace(path) && Directory.Exists(path))
+                .Select(path => Path.GetFullPath(path!))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
         }
         catch (Exception ex) when (ex is IOException or JsonException)
         {
-            return null;
+            return [];
         }
     }
 
-    private sealed record ShellCopyState(string SourcePath, DateTimeOffset SavedAt);
+    private sealed record ShellCopyState(IReadOnlyList<string> SourcePaths, DateTimeOffset SavedAt);
 }

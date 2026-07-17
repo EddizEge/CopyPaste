@@ -4,38 +4,57 @@ public enum ShellLaunchMode
 {
     Normal,
     Copy,
-    Paste
+    Paste,
+    Scheduled
 }
 public sealed record ShellLaunchRequest(
     ShellLaunchMode Mode,
     string? SourcePath,
     string? DestinationPath,
     string? Message,
-    bool AutoStart);
+    bool AutoStart,
+    Guid? ScheduleId = null,
+    CopyPaste.Core.Models.CopyJob? ScheduledJob = null,
+    IReadOnlyList<string>? SourcePaths = null);
 
 public static class ShellLaunchRequestResolver
 {
     public static ShellLaunchRequest Resolve(string[] arguments, ShellCopyStateStore stateStore)
     {
+        if (arguments.Length >= 3
+            && arguments[1].Equals("--schedule", StringComparison.OrdinalIgnoreCase)
+            && Guid.TryParse(arguments[2], out var scheduleId))
+        {
+            return new(ShellLaunchMode.Scheduled, null, null,
+                "Zamanlanmış transfer hazırlanıyor.", true, scheduleId);
+        }
         if (arguments.Length >= 3 && arguments[1].Equals("--copy", StringComparison.OrdinalIgnoreCase))
         {
-            var source = NormalizeExistingDirectory(arguments[2]);
-            if (source is null)
+            var sources = arguments.Skip(2).Select(NormalizeExistingDirectory)
+                .Where(path => path is not null)
+                .Select(path => path!)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            if (sources.Count == 0)
                 return new(ShellLaunchMode.Copy, null, null, "Seçilen kaynak klasör bulunamadı.", false);
 
-            stateStore.SaveSource(source);
+            stateStore.SaveSources(sources);
             return new(
                 ShellLaunchMode.Copy,
-                source,
+                sources[0],
                 null,
-                "Kaynak klasör hatırlandı. Hedef klasörde sağ tıklayıp ‘CopyPaste: Buraya yapıştır’ seçeneğini kullanın.",
-                false);
+                sources.Count == 1
+                    ? "Kaynak klasör hatırlandı. Hedef klasörde sağ tıklayıp ‘CopyPaste: Buraya yapıştır’ seçeneğini kullanın."
+                    : $"{sources.Count} kaynak klasör hatırlandı. Hedef klasörde CopyPaste ile yapıştırabilirsiniz.",
+                false,
+                SourcePaths: sources);
         }
 
         if (arguments.Length >= 3 && arguments[1].Equals("--paste", StringComparison.OrdinalIgnoreCase))
         {
             var destination = NormalizeExistingDirectory(arguments[2]);
-            var source = stateStore.LoadSource();
+            var sources = stateStore.LoadSources();
+            var source = sources.FirstOrDefault();
             if (destination is null)
                 return new(ShellLaunchMode.Paste, source, null, "Seçilen hedef klasör bulunamadı.", false);
             if (source is null)
@@ -46,7 +65,8 @@ public static class ShellLaunchRequestResolver
                 source,
                 destination,
                 "Explorer yapıştırma isteği alındı; transfer otomatik başlatılıyor.",
-                true);
+                true,
+                SourcePaths: sources);
         }
 
         var normalSource = StartupPathResolver.Resolve(arguments);

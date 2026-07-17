@@ -20,7 +20,7 @@ public sealed class ExplorerIntegrationService
         if (enabled)
         {
             RemoveAllMenus();
-            RegisterMenu(DirectoryCopyMenuPath, "CopyPaste: Kopyala", "--copy", "%1");
+            RegisterMenu(DirectoryCopyMenuPath, "CopyPaste ile kopyala", "--copy", "%*");
             RegisterMenu(DirectoryPasteMenuPath, "CopyPaste: Buraya yapıştır", "--paste", "%1");
             RegisterMenu(BackgroundPasteMenuPath, "CopyPaste: Buraya yapıştır", "--paste", "%V");
         }
@@ -43,6 +43,7 @@ public sealed class ExplorerIntegrationService
         menuKey.SetValue(string.Empty, label);
         menuKey.SetValue("Icon", executable);
         menuKey.SetValue("Position", "Top");
+        menuKey.SetValue("MultiSelectModel", "Player");
 
         using var commandKey = menuKey.CreateSubKey("command", writable: true)
             ?? throw new InvalidOperationException("Explorer komut anahtarı oluşturulamadı.");
@@ -67,10 +68,16 @@ public sealed class ExplorerIntegrationService
 
     private static bool HasCommand(string path)
     {
-        using var currentUser = OpenCurrentUser();
-        using var commandKey = currentUser.OpenSubKey(path + @"\command");
-        return commandKey?.GetValue(string.Empty) is string command
-            && command.Contains(Environment.ProcessPath ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+        foreach (var view in new[] { RegistryView.Registry64, RegistryView.Registry32 })
+        {
+            using var currentUser = RegistryKey.OpenBaseKey(RegistryHive.CurrentUser, view);
+            using var commandKey = currentUser.OpenSubKey(path + @"\command");
+            if (commandKey?.GetValue(string.Empty) is string command
+                && command.Contains("CopyPaste.App.exe", StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+
+        return false;
     }
 
     private static RegistryKey OpenCurrentUser() =>

@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using System.Globalization;
+using System.Text;
 using CopyPaste.Core.Models;
 
 namespace CopyPaste.Core.Services;
@@ -14,8 +16,8 @@ public static class RobocopyCommandBuilder
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             CreateNoWindow = true,
-            StandardOutputEncoding = Console.OutputEncoding,
-            StandardErrorEncoding = Console.OutputEncoding
+            StandardOutputEncoding = GetRobocopyEncoding(),
+            StandardErrorEncoding = GetRobocopyEncoding()
         };
 
         info.ArgumentList.Add(job.SourcePath);
@@ -58,5 +60,18 @@ public static class RobocopyCommandBuilder
         }
 
         return info;
+    }
+
+    private static Encoding GetRobocopyEncoding()
+    {
+        try
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+            return Encoding.GetEncoding(CultureInfo.CurrentCulture.TextInfo.OEMCodePage);
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException)
+        {
+            return Console.OutputEncoding;
+        }
     }
 }

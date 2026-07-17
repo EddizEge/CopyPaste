@@ -17,6 +17,7 @@ public sealed partial class RobocopyRunner
         job.Status = CopyJobStatus.Running;
         job.StartedAt ??= DateTimeOffset.Now;
         var outputAnalyzer = new RobocopyOutputAnalyzer();
+        var progressTracker = new RobocopyProgressTracker(job.EstimatedTotalBytes);
 
         try
         {
@@ -39,8 +40,8 @@ public sealed partial class RobocopyRunner
                 logLine?.Invoke(line);
             }
 
-            var outputTask = ReadOutputAsync(process.StandardOutput, progress, ObserveLine, cancellationToken);
-            var errorTask = ReadOutputAsync(process.StandardError, progress, ObserveLine, cancellationToken);
+            var outputTask = ReadOutputAsync(process.StandardOutput, progress, ObserveLine, progressTracker, cancellationToken);
+            var errorTask = ReadOutputAsync(process.StandardError, progress, ObserveLine, null, cancellationToken);
             await process.WaitForExitAsync(CancellationToken.None).ConfigureAwait(false);
             await Task.WhenAll(outputTask, errorTask).ConfigureAwait(false);
 
@@ -91,6 +92,7 @@ public sealed partial class RobocopyRunner
         StreamReader reader,
         IProgress<RobocopyProgress>? progress,
         Action<string>? logLine,
+        RobocopyProgressTracker? tracker,
         CancellationToken cancellationToken)
     {
         while (await reader.ReadLineAsync(cancellationToken).ConfigureAwait(false) is { } line)
@@ -99,7 +101,7 @@ public sealed partial class RobocopyRunner
                 continue;
 
             logLine?.Invoke(line);
-            progress?.Report(new RobocopyProgress(ParsePercentage(line), line.Trim()));
+            progress?.Report(tracker?.CreateProgress(line) ?? new RobocopyProgress(ParsePercentage(line), line.Trim()));
         }
     }
 
@@ -117,4 +119,46 @@ public sealed partial class RobocopyRunner
 
     [GeneratedRegex(@"^\s*(\d+(?:[\.,]\d+)?)%", RegexOptions.CultureInvariant)]
     private static partial Regex PercentageRegex();
+
+    [GeneratedRegex(@"^\s*(?:New File|Newer|Older|Same|Yeni Dosya|Yeni)\s+(\d+)\s+(.+)$",
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex FileHeaderRegex();
+
+    private sealed class RobocopyProgressTracker(long totalBytes)
+    {
+        private readonly Stopwatch _stopwatch = Stopwatch.StartNew();
+        private long _completedBytes;
+        private long _currentFileBytes;
+        private int _completedFiles;
+
+        public RobocopyProgress CreateProgress(string line)
+        {
+            var header = FileHeaderRegex().Match(line);
+            if (header.Success && long.TryParse(header.Groups[1].Value, out var fileBytes))
+                _currentFileBytes = Math.Max(0, fileBytes);
+
+            var percentage = ParsePercentage(line);
+            var currentBytes = percentage is { } value
+                ? (long)(_currentFileBytes * value / 100d)
+                : 0;
+            var transferred = Math.Max(0, _completedBytes + currentBytes);
+            if (percentage is >= 100 && _currentFileBytes > 0)
+            {
+                _completedBytes += _currentFileBytes;
+                transferred = _completedBytes;
+                _currentFileBytes = 0;
+                _completedFiles++;
+            }
+
+            var elapsedSeconds = _stopwatch.Elapsed.TotalSeconds;
+            double? speed = elapsedSeconds > 0 && transferred > 0 ? transferred / elapsedSeconds : null;
+            TimeSpan? remaining = speed is > 0 && totalBytes > transferred
+                ? TimeSpan.FromSeconds((totalBytes - transferred) / speed.Value)
+                : null;
+            var overallPercentage = totalBytes > 0
+                ? Math.Clamp(transferred * 100d / totalBytes, 0, 100)
+                : percentage;
+            return new(overallPercentage, line.Trim(), transferred, speed, remaining, _completedFiles);
+        }
+    }
 }
