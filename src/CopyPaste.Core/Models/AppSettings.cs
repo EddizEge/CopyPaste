@@ -13,6 +13,8 @@ public sealed record AppSettings
     public bool NotificationsEnabled { get; init; } = true;
     public bool MinimizeToTrayWhileRunning { get; init; } = true;
     public bool AutoDownloadUpdates { get; init; } = true;
+    public bool CheckForUpdatesOnStartup { get; init; } = true;
+    public bool StartWithWindows { get; init; }
     public string Language { get; init; } = "tr-TR";
     public IReadOnlyList<FavoriteLocation> FavoriteLocations { get; init; } = [];
     public IReadOnlyList<string> RecentSources { get; init; } = [];

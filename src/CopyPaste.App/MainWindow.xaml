@@ -25,7 +25,7 @@
                         <StackPanel Orientation="Horizontal" Spacing="9">
                             <TextBlock Text="CopyPaste" Foreground="White" FontSize="20" FontWeight="SemiBold" />
                             <Border Background="#28233F" CornerRadius="8" Padding="8,2" VerticalAlignment="Center">
-                                <TextBlock Text="1.3.1" Foreground="#B9B1FF" FontSize="10" FontWeight="SemiBold" />
+                                <TextBlock Text="1.3.2" Foreground="#B9B1FF" FontSize="10" FontWeight="SemiBold" />
                             </Border>
                         </StackPanel>
                         <TextBlock Text="Robocopy ile hızlı ve doğrulanabilir transfer" Style="{StaticResource MutedTextStyle}" />
@@ -400,19 +400,11 @@
                                     </StackPanel>
                                 </Expander>
                                 <ToggleSwitch x:Name="ContinueOnErrorToggle" Header="Hata olsa da sıradaki işe geç" />
-                                <ToggleSwitch x:Name="NotificationsToggle" Header="Transfer sonunda bildirim göster" />
-                                <ToggleSwitch x:Name="MinimizeOnCloseToggle" Header="Aktif işte kapatılırsa tepsiye küçült" />
-                                <ToggleSwitch x:Name="AutoUpdateToggle" Header="Güncellemeleri güvenle arka planda indir" />
                                 <ToggleSwitch x:Name="WaitForNetworkToggle" Header="Ağ koparsa bağlantının geri gelmesini bekle" />
                                 <StackPanel Spacing="5">
                                     <TextBlock Text="Ağ için en fazla bekleme (dakika)" Foreground="#C7CBD5" FontSize="12" />
                                     <NumberBox x:Name="NetworkRetryMinutesBox" Minimum="1" Maximum="1440" Value="15"
                                                SpinButtonPlacementMode="Compact" HorizontalAlignment="Stretch" />
-                                </StackPanel>
-                                <StackPanel Spacing="5">
-                                    <TextBlock Text="Dil" Foreground="#C7CBD5" FontSize="12" />
-                                    <ComboBox x:Name="LanguageComboBox" DisplayMemberPath="Label"
-                                              HorizontalAlignment="Stretch" />
                                 </StackPanel>
                                 <Button Content="Ayarları kaydet" Style="{StaticResource QuietButtonStyle}"
                                         HorizontalAlignment="Stretch" Click="SaveSettingsButton_Click" />
