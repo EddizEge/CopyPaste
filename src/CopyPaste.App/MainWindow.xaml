@@ -4,7 +4,7 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     Title="CopyPaste">
 
-    <Grid x:Name="RootGrid" Background="{StaticResource PageBrush}" RequestedTheme="Dark"
+    <Grid x:Name="RootGrid" Background="{StaticResource PageBrush}" RequestedTheme="Dark" Loaded="RootGrid_Loaded"
           AllowDrop="True" DragOver="RootGrid_DragOver" Drop="RootGrid_Drop">
         <Grid.RowDefinitions>
             <RowDefinition Height="64" />
@@ -25,7 +25,7 @@
                         <StackPanel Orientation="Horizontal" Spacing="9">
                             <TextBlock Text="CopyPaste" Foreground="White" FontSize="20" FontWeight="SemiBold" />
                             <Border Background="#28233F" CornerRadius="8" Padding="8,2" VerticalAlignment="Center">
-                                <TextBlock Text="1.2" Foreground="#B9B1FF" FontSize="10" FontWeight="SemiBold" />
+                                <TextBlock Text="1.3" Foreground="#B9B1FF" FontSize="10" FontWeight="SemiBold" />
                             </Border>
                         </StackPanel>
                         <TextBlock Text="Robocopy ile hızlı ve doğrulanabilir transfer" Style="{StaticResource MutedTextStyle}" />
@@ -36,6 +36,7 @@
                     <Button x:Name="CheckUpdatesButton" Content="Güncellemeler" Style="{StaticResource QuietButtonStyle}"
                             Click="CheckUpdatesButton_Click" />
                     <Button Content="Geçmiş" Style="{StaticResource QuietButtonStyle}" Click="HistoryButton_Click" />
+                    <Button Content="Zamanlama" Style="{StaticResource QuietButtonStyle}" Click="ScheduleButton_Click" />
                     <Button Content="Ayarlar" Style="{StaticResource QuietButtonStyle}" Click="SettingsButton_Click" />
                     <Button Content="—" Width="42" Style="{StaticResource QuietButtonStyle}"
                             ToolTipService.ToolTip="Tepsiye küçült" Click="TrayButton_Click" />
@@ -81,10 +82,18 @@
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="*" />
                                         <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="Auto" />
                                     </Grid.ColumnDefinitions>
                                     <TextBox x:Name="SourceTextBox" Style="{StaticResource PathTextBoxStyle}"
-                                             PlaceholderText="Kopyalanacak klasör" Padding="12,8,48,8" />
-                                    <Button Grid.Column="1" Content="⌕" Tag="Source" Click="BrowseButton_Click"
+                                             PlaceholderText="Kopyalanacak klasör" Padding="12,8" />
+                                    <Button Grid.Column="1" Content="★" Tag="Source" Click="FavoriteButton_Click"
+                                            Width="34" Height="34" Margin="4" Background="Transparent"
+                                            Foreground="#B9A9FF" BorderThickness="0" ToolTipService.ToolTip="Favorilere ekle veya kaldır" />
+                                    <Button Grid.Column="2" Content="▾" Tag="Source" Click="SavedLocationsButton_Click"
+                                            Width="34" Height="34" Margin="0,4" Background="Transparent"
+                                            Foreground="#D6D9E2" BorderThickness="0" ToolTipService.ToolTip="Favoriler ve son kullanılanlar" />
+                                    <Button Grid.Column="3" Content="⌕" Tag="Source" Click="BrowseButton_Click"
                                             Width="40" Height="34" Margin="0,4,4,4" Background="Transparent"
                                             Foreground="#D6D9E2" BorderThickness="0" ToolTipService.ToolTip="Kaynak seç" />
                                 </Grid>
@@ -95,18 +104,35 @@
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="*" />
                                         <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="Auto" />
                                     </Grid.ColumnDefinitions>
                                     <TextBox x:Name="DestinationTextBox" Style="{StaticResource PathTextBoxStyle}"
-                                             PlaceholderText="Dosyaların kopyalanacağı klasör" Padding="12,8,48,8" />
-                                    <Button Grid.Column="1" Content="⌕" Tag="Destination" Click="BrowseButton_Click"
+                                             PlaceholderText="Dosyaların kopyalanacağı klasör" Padding="12,8" />
+                                    <Button Grid.Column="1" Content="★" Tag="Destination" Click="FavoriteButton_Click"
+                                            Width="34" Height="34" Margin="4" Background="Transparent"
+                                            Foreground="#B9A9FF" BorderThickness="0" ToolTipService.ToolTip="Favorilere ekle veya kaldır" />
+                                    <Button Grid.Column="2" Content="▾" Tag="Destination" Click="SavedLocationsButton_Click"
+                                            Width="34" Height="34" Margin="0,4" Background="Transparent"
+                                            Foreground="#D6D9E2" BorderThickness="0" ToolTipService.ToolTip="Favoriler ve son kullanılanlar" />
+                                    <Button Grid.Column="3" Content="⌕" Tag="Destination" Click="BrowseButton_Click"
                                             Width="40" Height="34" Margin="0,4,4,4" Background="Transparent"
                                             Foreground="#D6D9E2" BorderThickness="0" ToolTipService.ToolTip="Hedef seç" />
                                 </Grid>
                             </StackPanel>
                             <StackPanel Grid.Column="2" Spacing="5">
                                 <TextBlock Text="Profil" Foreground="#D8DBE4" FontSize="12" FontWeight="SemiBold" />
-                                <ComboBox x:Name="ProfileComboBox" MinHeight="42" DisplayMemberPath="Name"
-                                          HorizontalAlignment="Stretch" SelectionChanged="ProfileComboBox_SelectionChanged" />
+                                <Grid ColumnSpacing="6">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <ComboBox x:Name="ProfileComboBox" MinHeight="42" DisplayMemberPath="Name"
+                                              HorizontalAlignment="Stretch" SelectionChanged="ProfileComboBox_SelectionChanged" />
+                                    <Button Grid.Column="1" Content="＋" Width="40" Height="42"
+                                            Style="{StaticResource QuietButtonStyle}" Click="SaveCustomProfileButton_Click"
+                                            ToolTipService.ToolTip="Seçili ayarları yeni profil olarak kaydet" />
+                                </Grid>
                             </StackPanel>
                         </Grid>
 
@@ -168,6 +194,17 @@
                                 </Grid>
                                 <ProgressBar x:Name="CopyProgressBar" Minimum="0" Maximum="100" Height="6"
                                              Foreground="{StaticResource AccentBrush}" />
+                                <Grid ColumnSpacing="16">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock x:Name="SpeedText" Text="Hız: —" Foreground="#B9A9FF" FontSize="12" />
+                                    <TextBlock x:Name="RemainingText" Grid.Column="1" Text="Kalan: —" Foreground="#929AAA" FontSize="12" />
+                                    <TextBlock x:Name="CompletedFilesText" Grid.Column="2" Text="0 dosya"
+                                               HorizontalAlignment="Right" Foreground="#929AAA" FontSize="12" />
+                                </Grid>
                                 <Grid ColumnSpacing="10">
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="*" />
@@ -300,6 +337,8 @@
                                                 Style="{StaticResource QuietButtonStyle}" Click="CopyFailuresButton_Click" />
                                         <Button x:Name="OpenFailureLogButton" Content="Günlüğü aç"
                                                 Style="{StaticResource QuietButtonStyle}" Click="OpenFailureLogButton_Click" />
+                                        <Button Content="Rapor" Style="{StaticResource QuietButtonStyle}"
+                                                Click="ExportReportButton_Click" />
                                         <Button Content="Yeniden dene" Style="{StaticResource PrimaryButtonStyle}"
                                                 Click="RetryFailedButton_Click" />
                                     </StackPanel>
@@ -365,6 +404,18 @@
                                 <ToggleSwitch x:Name="ContinueOnErrorToggle" Header="Hata olsa da sıradaki işe geç" />
                                 <ToggleSwitch x:Name="NotificationsToggle" Header="Transfer sonunda bildirim göster" />
                                 <ToggleSwitch x:Name="MinimizeOnCloseToggle" Header="Aktif işte kapatılırsa tepsiye küçült" />
+                                <ToggleSwitch x:Name="AutoUpdateToggle" Header="Güncellemeleri güvenle arka planda indir" />
+                                <ToggleSwitch x:Name="WaitForNetworkToggle" Header="Ağ koparsa bağlantının geri gelmesini bekle" />
+                                <StackPanel Spacing="5">
+                                    <TextBlock Text="Ağ için en fazla bekleme (dakika)" Foreground="#C7CBD5" FontSize="12" />
+                                    <NumberBox x:Name="NetworkRetryMinutesBox" Minimum="1" Maximum="1440" Value="15"
+                                               SpinButtonPlacementMode="Compact" HorizontalAlignment="Stretch" />
+                                </StackPanel>
+                                <StackPanel Spacing="5">
+                                    <TextBlock Text="Dil" Foreground="#C7CBD5" FontSize="12" />
+                                    <ComboBox x:Name="LanguageComboBox" DisplayMemberPath="Label"
+                                              HorizontalAlignment="Stretch" />
+                                </StackPanel>
                                 <Button Content="Ayarları kaydet" Style="{StaticResource QuietButtonStyle}"
                                         HorizontalAlignment="Stretch" Click="SaveSettingsButton_Click" />
                             </StackPanel>
@@ -379,6 +430,7 @@
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="*" />
                                         <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="*" />
                                     </Grid.ColumnDefinitions>
                                     <Button x:Name="ExplorerIntegrationButton" Content="Sağ tık menüsünü ekle"
                                             Style="{StaticResource QuietButtonStyle}" HorizontalAlignment="Stretch"
@@ -386,6 +438,9 @@
                                     <Button x:Name="TestNotificationButton" Grid.Column="1" Content="Bildirimi test et"
                                             Style="{StaticResource QuietButtonStyle}" HorizontalAlignment="Stretch"
                                             Click="TestNotificationButton_Click" />
+                                    <Button Grid.Column="2" Content="Tanılama paketi"
+                                            Style="{StaticResource QuietButtonStyle}" HorizontalAlignment="Stretch"
+                                            Click="DiagnosticsButton_Click" />
                                 </Grid>
                             </StackPanel>
                         </Border>
@@ -397,6 +452,9 @@
                                            Foreground="White" FontWeight="SemiBold" TextWrapping="Wrap" />
                                 <TextBlock x:Name="LastJobDetails" Text="İlk transferiniz burada görünecek."
                                            Foreground="#929AAA" FontSize="12" TextWrapping="Wrap" MaxHeight="150" />
+                                <Button x:Name="ExportReportButton" Content="HTML / CSV raporu oluştur"
+                                        IsEnabled="False" Style="{StaticResource QuietButtonStyle}"
+                                        HorizontalAlignment="Stretch" Click="ExportReportButton_Click" />
                             </StackPanel>
                         </Border>
 

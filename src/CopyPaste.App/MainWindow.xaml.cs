@@ -23,24 +23,46 @@ public sealed partial class MainWindow : Window
     private readonly HistoryStore _historyStore = new();
     private readonly SettingsStore _settingsStore = new();
     private readonly JobLogStore _jobLogStore = new();
+    private readonly QueueStateStore _queueStateStore = new();
     private readonly GitHubUpdateService _updateService = new();
+    private readonly UpdateDownloadService _updateDownloadService = new();
+    private readonly FailedItemRetryService _failedItemRetryService;
+    private readonly TransferReportService _reportService = new();
+    private readonly NetworkAvailabilityService _networkAvailability = new();
+    private readonly ScheduleStore _scheduleStore = new();
+    private readonly TaskSchedulerService _taskScheduler = new();
+    private readonly DiagnosticsService _diagnosticsService = new();
     private readonly AppNotificationService _notificationService;
     private readonly ExplorerIntegrationService _explorerIntegration = new();
     private readonly TrayIconService _trayIcon;
     private readonly AppWindow _appWindow;
     private readonly ObservableCollection<QueueItemViewModel> _queue = [];
+    private readonly ObservableCollection<CopyProfile> _profiles = new(CopyProfiles.All);
     private CancellationTokenSource? _copyCancellation;
     private QueueItemViewModel? _activeQueueItem;
     private bool _isQueueRunning;
     private bool _pauseRequested;
     private AppSettings _settings = new();
+    private string _language = "tr-TR";
     private Uri? _availableUpdateUri;
+    private UpdateCheckResult? _availableUpdate;
+    private string? _downloadedUpdatePath;
     private bool _isUpdateCheckRunning;
+    private bool _closeConfirmed;
+    private bool _closeDialogOpen;
+    private bool _rootLoaded;
     private CopyJob? _lastResultJob;
+    private readonly CopyJob? _startupJob;
+    private readonly IReadOnlyList<string> _startupSourcePaths;
+    private readonly string? _startupDestinationPath;
 
     public MainWindow(ShellLaunchRequest? shellRequest = null, AppNotificationService? notificationService = null)
     {
         InitializeComponent();
+        _startupJob = shellRequest?.ScheduledJob;
+        _startupSourcePaths = shellRequest?.SourcePaths ?? [];
+        _startupDestinationPath = shellRequest?.DestinationPath;
+        _failedItemRetryService = new FailedItemRetryService(_runner);
         _notificationService = notificationService ?? new AppNotificationService();
         _trayIcon = new TrayIconService(this);
         var windowId = Microsoft.UI.Win32Interop.GetWindowIdFromWindow(WindowNative.GetWindowHandle(this));
@@ -52,22 +74,9 @@ public sealed partial class MainWindow : Window
         _appWindow.Resize(new Windows.Graphics.SizeInt32(1380, 880));
         _appWindow.Closing += AppWindow_Closing;
         Closed += MainWindow_Closed;
-        ProfileComboBox.ItemsSource = CopyProfiles.All;
+        ProfileComboBox.ItemsSource = _profiles;
         ProfileComboBox.SelectedIndex = 0;
-        ExistingFileBehaviorComboBox.ItemsSource = new[]
-        {
-            new OptionChoice<ExistingFileBehavior>(ExistingFileBehavior.Update, "Yalnızca gerekenleri güncelle"),
-            new OptionChoice<ExistingFileBehavior>(ExistingFileBehavior.Skip, "Hedefte bulunanları atla"),
-            new OptionChoice<ExistingFileBehavior>(ExistingFileBehavior.Overwrite, "Tüm dosyaların üzerine yaz")
-        };
-        ExistingFileBehaviorComboBox.SelectedIndex = 0;
-        VerificationModeComboBox.ItemsSource = new[]
-        {
-            new OptionChoice<VerificationMode>(VerificationMode.Size, "Hızlı — dosya boyutu"),
-            new OptionChoice<VerificationMode>(VerificationMode.Sha256, "Tam — SHA-256"),
-            new OptionChoice<VerificationMode>(VerificationMode.None, "Doğrulama yapma")
-        };
-        VerificationModeComboBox.SelectedIndex = 0;
+        ApplyLanguageChoices();
         QueueListView.ItemsSource = _queue;
         if (!string.IsNullOrWhiteSpace(shellRequest?.SourcePath))
             SourceTextBox.Text = shellRequest.SourcePath;
@@ -94,10 +103,40 @@ public sealed partial class MainWindow : Window
     private async Task InitializeAsync(bool autoStart)
     {
         await LoadSettingsAsync();
+        await LoadQueueStateAsync();
         await LoadHistoryAsync();
-        if (autoStart && await AddCurrentTransferToQueueAsync())
+        if (_diagnosticsService.HasCrashReport)
+        {
+            ValidationText.Text = T("Önceki oturum beklenmedik şekilde kapandı. Tanılama paketini Windows entegrasyonu bölümünden oluşturabilirsiniz.",
+                "The previous session closed unexpectedly. You can create a diagnostics package from Windows integration.");
+            ValidationInfoBar.Visibility = Visibility.Visible;
+        }
+        if (_startupJob is not null)
+            LoadJobIntoForm(_startupJob);
+        if (autoStart && _startupSourcePaths.Count > 1 && !string.IsNullOrWhiteSpace(_startupDestinationPath))
+        {
+            foreach (var sourcePath in _startupSourcePaths)
+            {
+                SourceTextBox.Text = sourcePath;
+                var folderName = Path.GetFileName(Path.TrimEndingDirectorySeparator(sourcePath));
+                DestinationTextBox.Text = Path.Combine(_startupDestinationPath, folderName);
+                await AddCurrentTransferToQueueAsync();
+            }
             await RunQueueAsync();
+        }
+        else if (autoStart && await AddCurrentTransferToQueueAsync())
+        {
+            await RunQueueAsync();
+        }
         await CheckForUpdatesAsync(manual: false);
+    }
+
+    private void RootGrid_Loaded(object sender, RoutedEventArgs e)
+    {
+        if (_rootLoaded)
+            return;
+        _rootLoaded = true;
+        ApplyLanguage(_settings.Language);
     }
 
     private async void CheckUpdatesButton_Click(object sender, RoutedEventArgs e) =>
@@ -110,38 +149,45 @@ public sealed partial class MainWindow : Window
 
         _isUpdateCheckRunning = true;
         CheckUpdatesButton.IsEnabled = false;
-        CheckUpdatesButton.Content = "Kontrol ediliyor…";
+        CheckUpdatesButton.Content = T("Kontrol ediliyor…", "Checking…");
         try
         {
             var currentVersion = Assembly.GetExecutingAssembly().GetName().Version
-                ?? new Version(1, 2, 0, 0);
+                ?? new Version(1, 3, 0, 0);
             var result = await _updateService.CheckAsync(currentVersion);
             switch (result.Status)
             {
                 case UpdateCheckStatus.UpdateAvailable:
+                    _availableUpdate = result;
                     _availableUpdateUri = result.DownloadUri ?? result.ReleasePageUri;
-                    UpdateStatusText.Text = $"Yeni sürüm hazır: {result.TagName}. " +
-                                            $"Yüklü sürüm: {result.CurrentVersion.ToString(3)}.";
-                    OpenUpdateButton.Content = "İndir";
+                    UpdateStatusText.Text = T($"Yeni sürüm hazır: {result.TagName}. Yüklü sürüm: {result.CurrentVersion.ToString(3)}.",
+                        $"New version available: {result.TagName}. Installed: {result.CurrentVersion.ToString(3)}.");
+                    OpenUpdateButton.Content = T("İndir", "Download");
                     OpenUpdateButton.Visibility = _availableUpdateUri is null
                         ? Visibility.Collapsed
                         : Visibility.Visible;
                     UpdateInfoBar.Visibility = Visibility.Visible;
                     if (_settings.NotificationsEnabled)
                         _notificationService.ShowUpdateAvailable(result.TagName ?? result.LatestVersion?.ToString(3) ?? "Yeni");
+                    if (_settings.AutoDownloadUpdates && !string.IsNullOrWhiteSpace(result.Sha256Digest))
+                        await DownloadUpdateAsync(result, automatic: true);
                     break;
                 case UpdateCheckStatus.UpToDate when manual:
+                    _availableUpdate = null;
                     _availableUpdateUri = ProductInfo.LatestReleaseUri;
-                    UpdateStatusText.Text = $"CopyPaste güncel — {result.CurrentVersion.ToString(3)}.";
-                    OpenUpdateButton.Content = "Sürümleri aç";
+                    UpdateStatusText.Text = T($"CopyPaste güncel — {result.CurrentVersion.ToString(3)}.",
+                        $"CopyPaste is up to date — {result.CurrentVersion.ToString(3)}.");
+                    OpenUpdateButton.Content = T("Sürümleri aç", "Open releases");
                     OpenUpdateButton.Visibility = Visibility.Visible;
                     UpdateInfoBar.Visibility = Visibility.Visible;
                     break;
                 case UpdateCheckStatus.RepositoryUnavailable when manual:
-                    ShowUpdateCheckMessage("GitHub deposu veya yayınlanmış bir sürüm henüz bulunamadı.");
+                    ShowUpdateCheckMessage(T("GitHub deposu veya yayınlanmış bir sürüm henüz bulunamadı.",
+                        "The GitHub repository or a published release is not available yet."));
                     break;
                 case UpdateCheckStatus.NetworkError or UpdateCheckStatus.InvalidResponse when manual:
-                    ShowUpdateCheckMessage("Güncellemeler kontrol edilemedi. İnternet bağlantısını deneyip tekrar kontrol edin.");
+                    ShowUpdateCheckMessage(T("Güncellemeler kontrol edilemedi. İnternet bağlantısını deneyip tekrar kontrol edin.",
+                        "Could not check for updates. Check your internet connection and try again."));
                     break;
             }
         }
@@ -149,22 +195,76 @@ public sealed partial class MainWindow : Window
         {
             _isUpdateCheckRunning = false;
             CheckUpdatesButton.IsEnabled = true;
-            CheckUpdatesButton.Content = "Güncellemeleri kontrol et";
+            CheckUpdatesButton.Content = T("Güncellemeleri kontrol et", "Check for updates");
         }
     }
 
     private void ShowUpdateCheckMessage(string message)
     {
+        _availableUpdate = null;
         _availableUpdateUri = null;
         UpdateStatusText.Text = message;
         OpenUpdateButton.Visibility = Visibility.Collapsed;
         UpdateInfoBar.Visibility = Visibility.Visible;
     }
 
-    private void OpenUpdateButton_Click(object sender, RoutedEventArgs e)
+    private async void OpenUpdateButton_Click(object sender, RoutedEventArgs e)
     {
-        if (_availableUpdateUri is not null)
-            Process.Start(new ProcessStartInfo(_availableUpdateUri.AbsoluteUri) { UseShellExecute = true });
+        if (_availableUpdate is not { HasUpdate: true } update)
+        {
+            if (_availableUpdateUri is not null)
+                Process.Start(new ProcessStartInfo(_availableUpdateUri.AbsoluteUri) { UseShellExecute = true });
+            return;
+        }
+        if (_isQueueRunning)
+        {
+            UpdateStatusText.Text = T("Aktif transfer tamamlandıktan sonra güncellemeyi kurabilirsiniz.",
+                "You can install the update after the active transfer finishes.");
+            return;
+        }
+
+        var updatePath = File.Exists(_downloadedUpdatePath) ? _downloadedUpdatePath : await DownloadUpdateAsync(update);
+        if (string.IsNullOrWhiteSpace(updatePath))
+            return;
+
+        UpdateStatusText.Text = T("Güncelleme SHA-256 ile doğrulandı. Kurulum başlatılıyor…",
+            "Update verified with SHA-256. Starting setup…");
+        OpenUpdateButton.Content = T("Doğrulandı", "Verified");
+        Process.Start(new ProcessStartInfo(updatePath)
+        {
+            UseShellExecute = true,
+            Arguments = "/CLOSEAPPLICATIONS /RESTARTAPPLICATIONS"
+        });
+    }
+
+    private async Task<string?> DownloadUpdateAsync(UpdateCheckResult update, bool automatic = false)
+    {
+        OpenUpdateButton.IsEnabled = false;
+        OpenUpdateButton.Content = automatic ? T("Hazırlanıyor…", "Preparing…") : T("İndiriliyor…", "Downloading…");
+        var progress = new Progress<UpdateDownloadProgress>(value =>
+        {
+            OpenUpdateButton.Content = value.Percentage is { } percentage
+                ? T($"İndiriliyor %{percentage:0}", $"Downloading {percentage:0}%")
+                : T($"İndiriliyor {QueueItemViewModel.FormatBytes(value.BytesReceived)}",
+                    $"Downloading {QueueItemViewModel.FormatBytes(value.BytesReceived)}");
+        });
+        var updatesDirectory = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "CopyPaste", "Updates");
+        var download = await _updateDownloadService.DownloadAsync(update, updatesDirectory, progress);
+        if (!download.Success || string.IsNullOrWhiteSpace(download.FilePath))
+        {
+            UpdateStatusText.Text = download.Error ?? T("Güncelleme indirilemedi.", "The update could not be downloaded.");
+            OpenUpdateButton.Content = T("Tekrar dene", "Try again");
+            OpenUpdateButton.IsEnabled = true;
+            return null;
+        }
+
+        _downloadedUpdatePath = download.FilePath;
+        UpdateStatusText.Text = T($"{update.TagName} indirildi ve SHA-256 ile doğrulandı.",
+            $"{update.TagName} downloaded and verified with SHA-256.");
+        OpenUpdateButton.Content = T("Kur ve yeniden başlat", "Install and restart");
+        OpenUpdateButton.IsEnabled = true;
+        return download.FilePath;
     }
 
     private async void BrowseButton_Click(object sender, RoutedEventArgs e)
@@ -183,9 +283,13 @@ public sealed partial class MainWindow : Window
     }
 
     private void ProfileComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        => UpdateProfileDescription();
+
+    private void UpdateProfileDescription()
     {
         if (ProfileComboBox.SelectedItem is CopyProfile profile)
-            ProfileDescriptionText.Text = $"{profile.Description} • {profile.ThreadCount} paralel iş parçacığı";
+            ProfileDescriptionText.Text = $"{profile.Description} • {profile.ThreadCount} " +
+                                          T("paralel iş parçacığı", "parallel threads");
     }
 
     private async void StartButton_Click(object sender, RoutedEventArgs e)
@@ -233,25 +337,35 @@ public sealed partial class MainWindow : Window
         };
 
         _settings = GetSettingsFromUi();
+        _settings = _settings with
+        {
+            RecentSources = RememberPath(_settings.RecentSources, job.SourcePath),
+            RecentDestinations = RememberPath(_settings.RecentDestinations, job.DestinationPath)
+        };
         await _settingsStore.SaveAsync(_settings);
 
         StartButton.IsEnabled = false;
-        StartButton.Content = "Analiz ediliyor…";
+        StartButton.Content = T("Analiz ediliyor…", "Analyzing…");
         try
         {
             var preflight = await _preflightAnalyzer.AnalyzeAsync(job.SourcePath, job.DestinationPath, job.Options);
             if (!preflight.HasEnoughSpace)
             {
-                ValidationText.Text = "Hedef sürücüde bu transfer için yeterli boş alan yok.";
+                ValidationText.Text = T("Hedef sürücüde bu transfer için yeterli boş alan yok.",
+                    "The destination drive does not have enough free space for this transfer.");
                 ValidationInfoBar.Visibility = Visibility.Visible;
                 return false;
             }
 
-            _queue.Add(new QueueItemViewModel(job, preflight));
+            job.EstimatedTotalBytes = preflight.TotalBytes;
+            job.EstimatedFileCount = preflight.FileCount;
+            _queue.Add(new QueueItemViewModel(job, preflight, LocalizationService.IsEnglish(_language)));
+            await SaveQueueStateAsync();
             var warningText = preflight.Warnings.Count == 0
-                ? "Ön analiz tamamlandı."
+                ? T("Ön analiz tamamlandı.", "Preflight completed.")
                 : string.Join(" ", preflight.Warnings);
-            PreflightText.Text = $"{preflight.FileCount:N0} dosya • {preflight.DirectoryCount:N0} klasör • " +
+            PreflightText.Text = $"{preflight.FileCount:N0} {T("dosya", "files")} • " +
+                                 $"{preflight.DirectoryCount:N0} {T("klasör", "folders")} • " +
                                  $"{QueueItemViewModel.FormatBytes(preflight.TotalBytes)}. {warningText}";
             PreflightInfoBar.Visibility = Visibility.Visible;
             UpdateQueueState();
@@ -259,13 +373,13 @@ public sealed partial class MainWindow : Window
         }
         catch (OperationCanceledException)
         {
-            ValidationText.Text = "Ön analiz iptal edildi.";
+            ValidationText.Text = T("Ön analiz iptal edildi.", "Preflight was cancelled.");
             ValidationInfoBar.Visibility = Visibility.Visible;
             return false;
         }
         finally
         {
-            StartButton.Content = "Kuyruğa ekle";
+            StartButton.Content = T("Kuyruğa ekle", "Add to queue");
             StartButton.IsEnabled = !_isQueueRunning;
         }
     }
@@ -294,27 +408,49 @@ public sealed partial class MainWindow : Window
         foreach (var item in pendingItems)
         {
             _activeQueueItem = item;
-            StatusText.Text = $"Kopyalanıyor: {item.Title}";
+            StatusText.Text = T($"Kopyalanıyor: {item.Title}", $"Copying: {item.Title}");
             CurrentFileText.Text = item.Paths;
             item.SetRunning();
+            item.Job.Status = CopyJobStatus.Running;
+            await SaveQueueStateAsync();
             var progress = new Progress<RobocopyProgress>(UpdateProgress);
             var logLines = new ConcurrentQueue<string>();
-            var result = await _runner.RunAsync(
-                item.Job,
-                progress,
-                _copyCancellation.Token,
-                logLines.Enqueue);
+            RobocopyResult result;
+            if (_settings.WaitForNetwork && IsNetworkJob(item.Job)
+                && !await WaitForNetworkAsync(item.Job, _copyCancellation.Token))
+            {
+                result = new RobocopyResult(16, CopyJobStatus.Failed,
+                    T("Ağ bağlantısı belirtilen süre içinde geri gelmedi.",
+                        "The network connection did not return within the configured time."));
+            }
+            else
+            {
+                result = await _runner.RunAsync(
+                    item.Job,
+                    progress,
+                    _copyCancellation.Token,
+                    logLines.Enqueue);
+                if (_settings.WaitForNetwork && IsNetworkJob(item.Job) && IsLikelyNetworkFailure(result)
+                    && await WaitForNetworkAsync(item.Job, _copyCancellation.Token))
+                {
+                    logLines.Enqueue(T("--- Ağ bağlantısı geri geldi; yeniden başlatılabilir transfer sürdürülüyor. ---",
+                        "--- Network connection restored; resuming the restartable transfer. ---"));
+                    result = await _runner.RunAsync(
+                        item.Job, progress, _copyCancellation.Token, logLines.Enqueue);
+                }
+            }
             if (_pauseRequested && result.Status == CopyJobStatus.Cancelled)
             {
                 result = new RobocopyResult(-1, CopyJobStatus.Paused,
-                    "Transfer duraklatıldı; devam komutunda kaldığı yerden sürdürülecek.");
+                    T("Transfer duraklatıldı; devam komutunda kaldığı yerden sürdürülecek.",
+                        "Transfer paused; it will continue from where it stopped when resumed."));
             }
             if (result.Status is CopyJobStatus.Completed or CopyJobStatus.CompletedWithWarnings
                 && item.Job.Options.Verification != VerificationMode.None)
             {
                 try
                 {
-                    StatusText.Text = $"Doğrulanıyor: {item.Title}";
+                    StatusText.Text = T($"Doğrulanıyor: {item.Title}", $"Verifying: {item.Title}");
                     CopyProgressBar.IsIndeterminate = true;
                     PercentageText.Text = "—";
                     item.SetVerifying();
@@ -336,9 +472,11 @@ public sealed partial class MainWindow : Window
                 {
                     result = _pauseRequested
                         ? new RobocopyResult(-1, CopyJobStatus.Paused,
-                            "Doğrulama duraklatıldı; transfer yeniden doğrulanabilir.")
+                            T("Doğrulama duraklatıldı; transfer yeniden doğrulanabilir.",
+                                "Verification paused; the transfer can be verified again."))
                         : new RobocopyResult(-1, CopyJobStatus.Cancelled,
-                            "Doğrulama kullanıcı tarafından iptal edildi.");
+                            T("Doğrulama kullanıcı tarafından iptal edildi.",
+                                "Verification was cancelled by the user."));
                 }
             }
 
@@ -351,7 +489,7 @@ public sealed partial class MainWindow : Window
             if (result.Status == CopyJobStatus.Paused)
                 item.SetPaused();
             else
-                item.SetResult(result);
+                item.SetResult(result with { Summary = LocalizeSummary(result.Summary) });
             try
             {
                 item.Job.LogPath = await _jobLogStore.SaveAsync(item.Job, logLines);
@@ -369,6 +507,7 @@ public sealed partial class MainWindow : Window
                 item.Job.Summary += " Geçmiş kaydedilemedi: " + ex.Message;
             }
             ShowResult(item.Job);
+            await SaveQueueStateAsync();
 
             if (result.Status is CopyJobStatus.Cancelled or CopyJobStatus.Paused)
                 break;
@@ -387,6 +526,7 @@ public sealed partial class MainWindow : Window
             _notificationService.ShowTransferSummary(completedCount, partialCount, failedCount);
         _copyCancellation?.Dispose();
         _copyCancellation = null;
+        await SaveQueueStateAsync();
     }
 
     private void UpdateProgress(RobocopyProgress progress)
@@ -399,12 +539,19 @@ public sealed partial class MainWindow : Window
         CopyProgressBar.IsIndeterminate = false;
         CopyProgressBar.Value = percentage;
         PercentageText.Text = $"{percentage:0}%";
+        if (progress.BytesPerSecond is > 0)
+            SpeedText.Text = T($"Hız: {QueueItemViewModel.FormatBytes((long)progress.BytesPerSecond)}/sn",
+                $"Speed: {QueueItemViewModel.FormatBytes((long)progress.BytesPerSecond)}/s");
+        if (progress.EstimatedRemaining is { } remaining)
+            RemainingText.Text = T($"Kalan: {FormatDuration(remaining)}", $"Remaining: {FormatDuration(remaining)}");
+        if (progress.CompletedFiles is { } completedFiles)
+            CompletedFilesText.Text = T($"{completedFiles:N0} dosya", $"{completedFiles:N0} files");
     }
 
     private void CancelButton_Click(object sender, RoutedEventArgs e)
     {
         _pauseRequested = false;
-        StatusText.Text = "İptal ediliyor…";
+        StatusText.Text = T("İptal ediliyor…", "Cancelling…");
         CancelButton.IsEnabled = false;
         PauseButton.IsEnabled = false;
         _copyCancellation?.Cancel();
@@ -415,18 +562,19 @@ public sealed partial class MainWindow : Window
         if (!_isQueueRunning)
             return;
         _pauseRequested = true;
-        StatusText.Text = "Duraklatılıyor…";
+        StatusText.Text = T("Duraklatılıyor…", "Pausing…");
         PauseButton.IsEnabled = false;
         CancelButton.IsEnabled = false;
         _copyCancellation?.Cancel();
     }
 
-    private void ClearQueueButton_Click(object sender, RoutedEventArgs e)
+    private async void ClearQueueButton_Click(object sender, RoutedEventArgs e)
     {
         if (_isQueueRunning)
             return;
         _queue.Clear();
         UpdateQueueState();
+        await SaveQueueStateAsync();
     }
 
     private void QueueListView_SelectionChanged(object sender, SelectionChangedEventArgs e) =>
@@ -447,23 +595,27 @@ public sealed partial class MainWindow : Window
         _queue.Move(currentIndex, targetIndex);
         QueueListView.SelectedItem = item;
         UpdateQueueState();
+        _ = SaveQueueStateAsync();
     }
 
-    private void RemoveQueueItemButton_Click(object sender, RoutedEventArgs e)
+    private async void RemoveQueueItemButton_Click(object sender, RoutedEventArgs e)
     {
         if (_isQueueRunning || QueueListView.SelectedItem is not QueueItemViewModel item)
             return;
         _queue.Remove(item);
         UpdateQueueState();
+        await SaveQueueStateAsync();
     }
 
-    private void RetryButton_Click(object sender, RoutedEventArgs e)
+    private async void RetryButton_Click(object sender, RoutedEventArgs e)
     {
         if (_isQueueRunning || QueueListView.SelectedItem is not QueueItemViewModel item)
             return;
-        if (item.Job.Status is CopyJobStatus.Failed or CopyJobStatus.Cancelled or CopyJobStatus.Paused)
+        if (item.Job.Status is CopyJobStatus.CompletedWithErrors
+            or CopyJobStatus.Failed or CopyJobStatus.Cancelled or CopyJobStatus.Paused)
             item.ResetForRetry();
         UpdateQueueState();
+        await SaveQueueStateAsync();
     }
 
     private void RootGrid_DragOver(object sender, DragEventArgs e)
@@ -471,7 +623,7 @@ public sealed partial class MainWindow : Window
         if (e.DataView.Contains(StandardDataFormats.StorageItems))
         {
             e.AcceptedOperation = DataPackageOperation.Copy;
-            e.DragUIOverride.Caption = "Kaynak klasör olarak seç";
+            e.DragUIOverride.Caption = T("Kaynak klasör olarak seç", "Use as source folder");
             e.DragUIOverride.IsCaptionVisible = true;
         }
     }
@@ -480,7 +632,7 @@ public sealed partial class MainWindow : Window
     {
         if (!_trayIcon.HideToTray())
         {
-            ValidationText.Text = "Sistem tepsisi simgesi oluşturulamadı.";
+            ValidationText.Text = T("Sistem tepsisi simgesi oluşturulamadı.", "Could not create the system tray icon.");
             ValidationInfoBar.Visibility = Visibility.Visible;
         }
     }
@@ -494,7 +646,7 @@ public sealed partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            ValidationText.Text = "Explorer entegrasyonu güncellenemedi: " + ex.Message;
+            ValidationText.Text = T("Explorer entegrasyonu güncellenemedi: ", "Could not update Explorer integration: ") + ex.Message;
             ValidationInfoBar.Visibility = Visibility.Visible;
         }
     }
@@ -503,7 +655,22 @@ public sealed partial class MainWindow : Window
     {
         if (!_notificationService.ShowTestNotification())
         {
-            ValidationText.Text = "Windows bildirimi gösterilemedi.";
+            ValidationText.Text = T("Windows bildirimi gösterilemedi.", "Could not show the Windows notification.");
+            ValidationInfoBar.Visibility = Visibility.Visible;
+        }
+    }
+
+    private async void DiagnosticsButton_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            var path = await _diagnosticsService.CreatePackageAsync();
+            PreflightText.Text = T($"Tanılama paketi oluşturuldu: {path}", $"Diagnostics package created: {path}");
+            PreflightInfoBar.Visibility = Visibility.Visible;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            ValidationText.Text = T("Tanılama paketi oluşturulamadı: ", "Could not create diagnostics package: ") + ex.Message;
             ValidationInfoBar.Visibility = Visibility.Visible;
         }
     }
@@ -512,7 +679,7 @@ public sealed partial class MainWindow : Window
 
     private void AppWindow_Closing(AppWindow sender, AppWindowClosingEventArgs args)
     {
-        if (!_isQueueRunning)
+        if (!_isQueueRunning || _closeConfirmed)
             return;
 
         if (_settings.MinimizeToTrayWhileRunning)
@@ -522,9 +689,41 @@ public sealed partial class MainWindow : Window
         }
         else
         {
+            args.Cancel = true;
+            if (!_closeDialogOpen)
+                _ = ConfirmCloseDuringTransferAsync();
+        }
+    }
+
+    private async Task ConfirmCloseDuringTransferAsync()
+    {
+        _closeDialogOpen = true;
+        try
+        {
+            var dialog = new ContentDialog
+            {
+                Title = T("Aktif transfer devam ediyor", "A transfer is still active"),
+                Content = T("Çıkarsanız aktif iş güvenli biçimde iptal edilir. İsterseniz uygulamayı tepsiye küçülterek devam edebilirsiniz.",
+                    "Closing will safely cancel the active job. You can minimize to the tray and keep it running instead."),
+                PrimaryButtonText = T("İptal et ve çık", "Cancel and exit"),
+                SecondaryButtonText = T("Tepsiye küçült", "Minimize to tray"),
+                CloseButtonText = T("Vazgeç", "Keep open"),
+                XamlRoot = Content.XamlRoot
+            };
+            var result = await dialog.ShowAsync();
+            if (result == ContentDialogResult.Secondary)
+            {
+                _trayIcon.HideToTray();
+                return;
+            }
+            if (result != ContentDialogResult.Primary)
+                return;
+            _closeConfirmed = true;
             _pauseRequested = false;
             _copyCancellation?.Cancel();
+            Close();
         }
+        finally { _closeDialogOpen = false; }
     }
 
     private void MainWindow_Closed(object sender, WindowEventArgs args)
@@ -536,15 +735,17 @@ public sealed partial class MainWindow : Window
     private void UpdateIntegrationState()
     {
         var explorerText = _explorerIntegration.IsRegistered
-            ? "Kopyala/yapıştır menüleri etkin; Windows 11’de ‘Daha fazla seçenek göster’ altında görünür."
-            : "Explorer kopyala/yapıştır menüleri henüz etkin değil.";
+            ? T("Kopyala/yapıştır menüleri etkin; Windows 11’de ‘Daha fazla seçenek göster’ altında görünür.",
+                "Copy/paste menus are enabled; on Windows 11 they appear under ‘Show more options’.")
+            : T("Explorer kopyala/yapıştır menüleri henüz etkin değil.",
+                "Explorer copy/paste menus are not enabled yet.");
         var notificationText = _notificationService.IsAvailable
-            ? "Windows bildirimleri hazır."
-            : "Windows bildirimleri bu oturumda kullanılamıyor.";
+            ? T("Windows bildirimleri hazır.", "Windows notifications are ready.")
+            : T("Windows bildirimleri bu oturumda kullanılamıyor.", "Windows notifications are unavailable in this session.");
         IntegrationStatusText.Text = explorerText + " " + notificationText;
         ExplorerIntegrationButton.Content = _explorerIntegration.IsRegistered
-            ? "Sağ tık menüsünü kaldır"
-            : "Sağ tık menüsünü ekle";
+            ? T("Sağ tık menüsünü kaldır", "Remove context menu")
+            : T("Sağ tık menüsünü ekle", "Add context menu");
         TestNotificationButton.IsEnabled = _notificationService.IsAvailable;
     }
 
@@ -557,7 +758,7 @@ public sealed partial class MainWindow : Window
         if (items.FirstOrDefault(item => item is StorageFolder) is StorageFolder folder)
         {
             SourceTextBox.Text = folder.Path;
-            DropHintText.Text = $"Kaynak seçildi: {folder.Name}";
+            DropHintText.Text = T($"Kaynak seçildi: {folder.Name}", $"Source selected: {folder.Name}");
             PreflightInfoBar.Visibility = Visibility.Collapsed;
             ValidationInfoBar.Visibility = Visibility.Collapsed;
         }
@@ -582,23 +783,23 @@ public sealed partial class MainWindow : Window
             list.SelectedIndex = 0;
         var clearButton = new Button
         {
-            Content = "Geçmişi temizle",
+            Content = T("Geçmişi temizle", "Clear history"),
             HorizontalAlignment = HorizontalAlignment.Left,
             IsEnabled = choices.Count > 0
         };
         var panel = new StackPanel { Spacing = 10 };
         panel.Children.Add(choices.Count == 0
-            ? new TextBlock { Text = "Henüz kayıtlı transfer bulunmuyor." }
+            ? new TextBlock { Text = T("Henüz kayıtlı transfer bulunmuyor.", "There are no saved transfers yet.") }
             : list);
         panel.Children.Add(clearButton);
 
         var dialog = new ContentDialog
         {
-            Title = "Transfer geçmişi",
+            Title = T("Transfer geçmişi", "Transfer history"),
             Content = panel,
-            PrimaryButtonText = "Forma yükle",
-            SecondaryButtonText = "Günlüğü aç",
-            CloseButtonText = "Kapat",
+            PrimaryButtonText = T("Forma yükle", "Load into form"),
+            SecondaryButtonText = T("Günlüğü aç", "Open log"),
+            CloseButtonText = T("Kapat", "Close"),
             XamlRoot = Content.XamlRoot
         };
         clearButton.Click += async (_, _) =>
@@ -607,8 +808,8 @@ public sealed partial class MainWindow : Window
             choices.Clear();
             list.ItemsSource = null;
             clearButton.IsEnabled = false;
-            LastJobTitle.Text = "Henüz tamamlanan işlem yok";
-            LastJobDetails.Text = "İlk transferiniz burada görünecek.";
+            LastJobTitle.Text = T("Henüz tamamlanan işlem yok", "No completed operation yet");
+            LastJobDetails.Text = T("İlk transferiniz burada görünecek.", "Your first transfer will appear here.");
         };
         var result = await dialog.ShowAsync();
         if (list.SelectedItem is not HistoryChoice selected)
@@ -617,6 +818,115 @@ public sealed partial class MainWindow : Window
             LoadJobIntoForm(selected.Job);
         else if (result == ContentDialogResult.Secondary)
             OpenLog(selected.Job.LogPath);
+    }
+
+    private async void ScheduleButton_Click(object sender, RoutedEventArgs e)
+    {
+        var schedules = (await _scheduleStore.LoadAsync()).ToList();
+        var choices = schedules.Select(schedule => new ScheduleChoice(
+            schedule,
+            $"{schedule.Name} • {schedule.TimeOfDay}\n{schedule.Job.SourcePath} → {schedule.Job.DestinationPath}"))
+            .ToList();
+        var list = new ListView
+        {
+            ItemsSource = choices,
+            DisplayMemberPath = nameof(ScheduleChoice.Label),
+            SelectionMode = ListViewSelectionMode.Single,
+            MinWidth = 620,
+            MaxHeight = 220
+        };
+        if (choices.Count > 0)
+            list.SelectedIndex = 0;
+        var nameBox = new TextBox
+        {
+            Header = T("Görev adı", "Task name"),
+            Text = T("Günlük CopyPaste transferi", "Daily CopyPaste transfer"),
+            PlaceholderText = T("Örn. Gece NAS yedeği", "Example: Nightly NAS backup")
+        };
+        var timePicker = new TimePicker
+        {
+            Header = T("Her gün çalışacağı saat", "Run every day at"),
+            Time = new TimeSpan(2, 0, 0),
+            ClockIdentifier = "24HourClock"
+        };
+        var panel = new StackPanel { Spacing = 10 };
+        if (choices.Count > 0)
+        {
+            panel.Children.Add(new TextBlock
+            {
+                Text = T("Kayıtlı görevler", "Saved tasks"),
+                FontWeight = Microsoft.UI.Text.FontWeights.SemiBold
+            });
+            panel.Children.Add(list);
+        }
+        panel.Children.Add(nameBox);
+        panel.Children.Add(timePicker);
+        var dialog = new ContentDialog
+        {
+            Title = T("Zamanlanmış transferler", "Scheduled transfers"),
+            Content = panel,
+            PrimaryButtonText = T("Günlük görev oluştur", "Create daily task"),
+            SecondaryButtonText = choices.Count > 0 ? T("Seçili görevi kaldır", "Remove selected task") : string.Empty,
+            CloseButtonText = T("Kapat", "Close"),
+            XamlRoot = Content.XamlRoot
+        };
+        var result = await dialog.ShowAsync();
+        if (result == ContentDialogResult.Secondary && list.SelectedItem is ScheduleChoice selected)
+        {
+            try { await _taskScheduler.RemoveAsync(selected.Schedule.Id); }
+            catch (InvalidOperationException) { }
+            await _scheduleStore.RemoveAsync(selected.Schedule.Id);
+            PreflightText.Text = T("Zamanlanmış görev kaldırıldı.", "Scheduled task removed.");
+            PreflightInfoBar.Visibility = Visibility.Visible;
+            return;
+        }
+        if (result != ContentDialogResult.Primary)
+            return;
+
+        var validation = CopyJobValidator.Validate(SourceTextBox.Text, DestinationTextBox.Text);
+        if (!validation.IsValid
+            || ProfileComboBox.SelectedItem is not CopyProfile profile
+            || ExistingFileBehaviorComboBox.SelectedItem is not OptionChoice<ExistingFileBehavior> existingChoice
+            || VerificationModeComboBox.SelectedItem is not OptionChoice<VerificationMode> verificationChoice)
+        {
+            ValidationText.Text = validation.Error ?? T("Zamanlama ayarları geçersiz.", "Scheduling settings are invalid.");
+            ValidationInfoBar.Visibility = Visibility.Visible;
+            return;
+        }
+        var options = CopyJobOptionsParser.Parse(existingChoice.Value, verificationChoice.Value,
+            FilePatternsTextBox.Text, ExcludedDirectoriesTextBox.Text);
+        if (!options.IsValid)
+        {
+            ValidationText.Text = options.Error;
+            ValidationInfoBar.Visibility = Visibility.Visible;
+            return;
+        }
+
+        var schedule = new ScheduledTransfer
+        {
+            Name = string.IsNullOrWhiteSpace(nameBox.Text) ? T("Günlük transfer", "Daily transfer") : nameBox.Text.Trim(),
+            TimeOfDay = timePicker.Time.ToString(@"hh\:mm"),
+            Job = new CopyJob
+            {
+                SourcePath = Path.GetFullPath(SourceTextBox.Text.Trim()),
+                DestinationPath = Path.GetFullPath(DestinationTextBox.Text.Trim()),
+                Profile = profile,
+                Options = options.Options!
+            }
+        };
+        try
+        {
+            await _taskScheduler.RegisterDailyAsync(schedule);
+            await _scheduleStore.SaveAsync(schedule);
+            PreflightText.Text = T($"{schedule.Name} her gün {schedule.TimeOfDay} için zamanlandı.",
+                $"{schedule.Name} scheduled every day at {schedule.TimeOfDay}.");
+            PreflightInfoBar.Visibility = Visibility.Visible;
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or IOException or UnauthorizedAccessException)
+        {
+            ValidationText.Text = T("Zamanlanmış görev oluşturulamadı: ", "Could not create scheduled task: ") + ex.Message;
+            ValidationInfoBar.Visibility = Visibility.Visible;
+        }
     }
 
     private void SettingsButton_Click(object sender, RoutedEventArgs e)
@@ -629,14 +939,22 @@ public sealed partial class MainWindow : Window
     {
         _settings = GetSettingsFromUi();
         await _settingsStore.SaveAsync(_settings);
-        PreflightText.Text = "Çalışma ayarları kaydedildi.";
+        ApplyLanguage(_settings.Language);
+        PreflightText.Text = T("Çalışma ayarları kaydedildi.", "Application settings saved.");
         PreflightInfoBar.Visibility = Visibility.Visible;
     }
 
     private async Task LoadSettingsAsync()
     {
         _settings = await _settingsStore.LoadAsync();
+        _language = _settings.Language;
+        _profiles.Clear();
+        foreach (var profile in GetBuiltInProfiles().Concat(_settings.CustomProfiles)
+                     .GroupBy(profile => profile.Id, StringComparer.OrdinalIgnoreCase)
+                     .Select(group => group.First()))
+            _profiles.Add(profile);
         ApplySettingsToUi(_settings);
+        ApplyLanguage(_settings.Language);
     }
 
     private AppSettings GetSettingsFromUi() => new()
@@ -650,13 +968,23 @@ public sealed partial class MainWindow : Window
         ExcludedDirectories = ExcludedDirectoriesTextBox.Text,
         ContinueQueueOnError = ContinueOnErrorToggle.IsOn,
         NotificationsEnabled = NotificationsToggle.IsOn,
-        MinimizeToTrayWhileRunning = MinimizeOnCloseToggle.IsOn
+        MinimizeToTrayWhileRunning = MinimizeOnCloseToggle.IsOn,
+        AutoDownloadUpdates = AutoUpdateToggle.IsOn,
+        WaitForNetwork = WaitForNetworkToggle.IsOn,
+        NetworkRetryMinutes = double.IsNaN(NetworkRetryMinutesBox.Value)
+            ? 15
+            : (int)Math.Clamp(NetworkRetryMinutesBox.Value, 1, 1440),
+        Language = (LanguageComboBox.SelectedItem as OptionChoice<string>)?.Value ?? _language,
+        FavoriteLocations = _settings.FavoriteLocations,
+        RecentSources = _settings.RecentSources,
+        RecentDestinations = _settings.RecentDestinations,
+        CustomProfiles = _settings.CustomProfiles
     };
 
     private void ApplySettingsToUi(AppSettings settings)
     {
-        ProfileComboBox.SelectedItem = CopyProfiles.All.FirstOrDefault(profile => profile.Id == settings.DefaultProfileId)
-            ?? CopyProfiles.All[0];
+        ProfileComboBox.SelectedItem = _profiles.FirstOrDefault(profile => profile.Id == settings.DefaultProfileId)
+            ?? _profiles[0];
         SelectChoice(ExistingFileBehaviorComboBox, settings.ExistingFiles);
         SelectChoice(VerificationModeComboBox, settings.Verification);
         FilePatternsTextBox.Text = string.IsNullOrWhiteSpace(settings.FilePatterns) ? "*" : settings.FilePatterns;
@@ -664,6 +992,12 @@ public sealed partial class MainWindow : Window
         ContinueOnErrorToggle.IsOn = settings.ContinueQueueOnError;
         NotificationsToggle.IsOn = settings.NotificationsEnabled;
         MinimizeOnCloseToggle.IsOn = settings.MinimizeToTrayWhileRunning;
+        AutoUpdateToggle.IsOn = settings.AutoDownloadUpdates;
+        WaitForNetworkToggle.IsOn = settings.WaitForNetwork;
+        NetworkRetryMinutesBox.Value = Math.Clamp(settings.NetworkRetryMinutes, 1, 1440);
+        LanguageComboBox.SelectedItem = LanguageComboBox.Items.Cast<object>()
+            .OfType<OptionChoice<string>>()
+            .FirstOrDefault(choice => choice.Value.Equals(settings.Language, StringComparison.OrdinalIgnoreCase));
     }
 
     private static void SelectChoice<T>(ComboBox comboBox, T value) where T : struct, Enum
@@ -673,17 +1007,256 @@ public sealed partial class MainWindow : Window
             .FirstOrDefault(choice => EqualityComparer<T>.Default.Equals(choice.Value, value));
     }
 
+    private void ApplyLanguage(string language)
+    {
+        var selectedProfileId = (ProfileComboBox.SelectedItem as CopyProfile)?.Id ?? _settings.DefaultProfileId;
+        _language = LocalizationService.IsEnglish(language) ? "en-US" : "tr-TR";
+        _profiles.Clear();
+        foreach (var profile in GetBuiltInProfiles().Concat(_settings.CustomProfiles)
+                     .GroupBy(profile => profile.Id, StringComparer.OrdinalIgnoreCase)
+                     .Select(group => group.First()))
+            _profiles.Add(profile);
+        ProfileComboBox.SelectedItem = _profiles.FirstOrDefault(profile => profile.Id == selectedProfileId) ?? _profiles[0];
+        ApplyLanguageChoices();
+        LocalizationService.Apply(Content, _language);
+        CheckUpdatesButton.Content = T("Güncellemeleri kontrol et", "Check for updates");
+        foreach (var item in _queue)
+            item.SetLanguage(LocalizationService.IsEnglish(_language));
+        UpdateProfileDescription();
+        UpdateQueueState();
+        UpdateIntegrationState();
+    }
+
+    private void ApplyLanguageChoices()
+    {
+        var existing = (ExistingFileBehaviorComboBox.SelectedItem as OptionChoice<ExistingFileBehavior>)?.Value
+            ?? ExistingFileBehavior.Update;
+        ExistingFileBehaviorComboBox.ItemsSource = new[]
+        {
+            new OptionChoice<ExistingFileBehavior>(ExistingFileBehavior.Update,
+                T("Yalnızca gerekenleri güncelle", "Update only changed files")),
+            new OptionChoice<ExistingFileBehavior>(ExistingFileBehavior.Skip,
+                T("Hedefte bulunanları atla", "Skip files already at destination")),
+            new OptionChoice<ExistingFileBehavior>(ExistingFileBehavior.Overwrite,
+                T("Tüm dosyaların üzerine yaz", "Overwrite all files"))
+        };
+        SelectChoice(ExistingFileBehaviorComboBox, existing);
+
+        var verification = (VerificationModeComboBox.SelectedItem as OptionChoice<VerificationMode>)?.Value
+            ?? VerificationMode.Size;
+        VerificationModeComboBox.ItemsSource = new[]
+        {
+            new OptionChoice<VerificationMode>(VerificationMode.Size, T("Hızlı — dosya boyutu", "Fast — file size")),
+            new OptionChoice<VerificationMode>(VerificationMode.Sha256, T("Tam — SHA-256", "Full — SHA-256")),
+            new OptionChoice<VerificationMode>(VerificationMode.None, T("Doğrulama yapma", "Do not verify"))
+        };
+        SelectChoice(VerificationModeComboBox, verification);
+
+        var selectedLanguage = (LanguageComboBox.SelectedItem as OptionChoice<string>)?.Value ?? _language;
+        LanguageComboBox.ItemsSource = new[]
+        {
+            new OptionChoice<string>("tr-TR", T("Türkçe", "Turkish")),
+            new OptionChoice<string>("en-US", T("İngilizce", "English"))
+        };
+        LanguageComboBox.SelectedItem = LanguageComboBox.Items.Cast<object>()
+            .OfType<OptionChoice<string>>()
+            .First(choice => choice.Value.Equals(selectedLanguage, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private IEnumerable<CopyProfile> GetBuiltInProfiles() => LocalizationService.IsEnglish(_language)
+        ?
+        [
+            CopyProfiles.All[0] with { Name = "Balanced", Description = "Balanced speed and reliability for everyday copies" },
+            CopyProfiles.All[1] with { Name = "Fastest", Description = "High parallelism for SSDs and fast local disks" },
+            CopyProfiles.All[2] with { Name = "Large files", Description = "Optimized for videos, archives, and disk images" }
+        ]
+        : CopyProfiles.All;
+
+    private string T(string turkish, string english) =>
+        LocalizationService.IsEnglish(_language) ? english : turkish;
+
+    private string LocalizeSummary(string? summary)
+    {
+        if (string.IsNullOrWhiteSpace(summary) || !LocalizationService.IsEnglish(_language))
+            return summary ?? string.Empty;
+
+        return summary
+            .Replace("Hedef zaten güncel; kopyalanacak dosya yok.", "The destination is already up to date; there are no files to copy.")
+            .Replace("Tüm dosyalar başarıyla kopyalandı.", "All files were copied successfully.")
+            .Replace("İşlem hatalarla birlikte tamamlandı.", "The operation completed with errors.")
+            .Replace("kopyalanamadı; diğer dosyalar başarıyla işlendi.", "could not be copied; all other files were processed successfully.")
+            .Replace("Robocopy ciddi bir hata nedeniyle transferi tamamlayamadı.", "Robocopy could not complete the transfer because of a serious error.")
+            .Replace("Doğrulama başarılı:", "Verification successful:")
+            .Replace("Doğrulama başarısız:", "Verification failed:")
+            .Replace("dosya kontrol edildi.", "files checked.")
+            .Replace("1 files checked.", "1 file checked.")
+            .Replace("eksik", "missing")
+            .Replace("boyut farkı", "size mismatches")
+            .Replace("hash farkı", "hash mismatches")
+            .Replace("okuma hatası", "read errors");
+    }
+
+    private static string FormatDuration(TimeSpan value) => value.TotalHours >= 1
+        ? $"{(int)value.TotalHours:00}:{value.Minutes:00}:{value.Seconds:00}"
+        : $"{value.Minutes:00}:{value.Seconds:00}";
+
+    private static bool IsNetworkJob(CopyJob job) =>
+        NetworkAvailabilityService.IsNetworkPath(job.SourcePath)
+        || NetworkAvailabilityService.IsNetworkPath(job.DestinationPath);
+
+    private static bool IsLikelyNetworkFailure(RobocopyResult result)
+    {
+        int[] networkErrorCodes = [53, 64, 67, 121, 1231, 1232];
+        return result.Status == CopyJobStatus.Failed
+               || result.Failures?.Any(failure => failure.ErrorCode is { } code
+                   && networkErrorCodes.Contains(code)) == true;
+    }
+
+    private async Task<bool> WaitForNetworkAsync(CopyJob job, CancellationToken cancellationToken)
+    {
+        var progress = new Progress<NetworkWaitProgress>(value =>
+        {
+            StatusText.Text = T("Ağ bağlantısı bekleniyor", "Waiting for network");
+            CurrentFileText.Text = T(value.Message, "Network location is unavailable; waiting for it to return.");
+            RemainingText.Text = T($"Kalan bekleme: {FormatDuration(value.Remaining)}",
+                $"Wait remaining: {FormatDuration(value.Remaining)}");
+        });
+        return await _networkAvailability.WaitForAvailabilityAsync(
+            job.SourcePath,
+            job.DestinationPath,
+            TimeSpan.FromMinutes(Math.Clamp(_settings.NetworkRetryMinutes, 1, 1440)),
+            progress,
+            cancellationToken);
+    }
+
+    private async void FavoriteButton_Click(object sender, RoutedEventArgs e)
+    {
+        var isSource = (sender as FrameworkElement)?.Tag?.ToString() == "Source";
+        var path = (isSource ? SourceTextBox.Text : DestinationTextBox.Text).Trim();
+        if (!Directory.Exists(path))
+        {
+            ValidationText.Text = T("Favoriye eklemek için erişilebilir bir klasör seçin.",
+                "Select an accessible folder to add it to favorites.");
+            ValidationInfoBar.Visibility = Visibility.Visible;
+            return;
+        }
+
+        path = Path.GetFullPath(path);
+        var favorites = _settings.FavoriteLocations.ToList();
+        var existing = favorites.FindIndex(item => item.Path.Equals(path, StringComparison.OrdinalIgnoreCase));
+        if (existing >= 0)
+        {
+            favorites.RemoveAt(existing);
+            PreflightText.Text = T("Klasör favorilerden kaldırıldı.", "Folder removed from favorites.");
+        }
+        else
+        {
+            var name = Path.GetFileName(Path.TrimEndingDirectorySeparator(path));
+            favorites.Add(new(string.IsNullOrWhiteSpace(name) ? path : name, path));
+            PreflightText.Text = T("Klasör favorilere eklendi.", "Folder added to favorites.");
+        }
+        _settings = GetSettingsFromUi() with { FavoriteLocations = favorites };
+        await _settingsStore.SaveAsync(_settings);
+        PreflightInfoBar.Visibility = Visibility.Visible;
+    }
+
+    private async void SavedLocationsButton_Click(object sender, RoutedEventArgs e)
+    {
+        var isSource = (sender as FrameworkElement)?.Tag?.ToString() == "Source";
+        var recent = isSource ? _settings.RecentSources : _settings.RecentDestinations;
+        var choices = _settings.FavoriteLocations
+            .Select(item => new SavedLocationChoice(item.Path, $"★ {item.Name}\n{item.Path}"))
+            .Concat(recent.Where(path => _settings.FavoriteLocations.All(favorite =>
+                    !favorite.Path.Equals(path, StringComparison.OrdinalIgnoreCase)))
+                .Select(path => new SavedLocationChoice(path, $"{T("Son kullanılan", "Recently used")}\n{path}")))
+            .ToList();
+        if (choices.Count == 0)
+        {
+            ValidationText.Text = T("Henüz favori veya son kullanılan klasör bulunmuyor.",
+                "There are no favorite or recently used folders yet.");
+            ValidationInfoBar.Visibility = Visibility.Visible;
+            return;
+        }
+
+        var list = new ListView
+        {
+            ItemsSource = choices,
+            DisplayMemberPath = nameof(SavedLocationChoice.Label),
+            SelectionMode = ListViewSelectionMode.Single,
+            MinWidth = 560,
+            MaxHeight = 380,
+            SelectedIndex = 0
+        };
+        var dialog = new ContentDialog
+        {
+            Title = isSource ? T("Kaynak klasörü seç", "Select source folder") : T("Hedef klasörü seç", "Select destination folder"),
+            Content = list,
+            PrimaryButtonText = T("Seç", "Select"),
+            CloseButtonText = T("Kapat", "Close"),
+            XamlRoot = Content.XamlRoot
+        };
+        if (await dialog.ShowAsync() != ContentDialogResult.Primary
+            || list.SelectedItem is not SavedLocationChoice selected)
+            return;
+        if (isSource)
+            SourceTextBox.Text = selected.Path;
+        else
+            DestinationTextBox.Text = selected.Path;
+    }
+
+    private async void SaveCustomProfileButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (ProfileComboBox.SelectedItem is not CopyProfile selectedProfile)
+            return;
+        var nameBox = new TextBox { PlaceholderText = T("Örn. NAS yedekleme", "Example: NAS backup"), MinWidth = 360 };
+        var dialog = new ContentDialog
+        {
+            Title = T("Özel profil kaydet", "Save custom profile"),
+            Content = nameBox,
+            PrimaryButtonText = T("Kaydet", "Save"),
+            CloseButtonText = T("Vazgeç", "Cancel"),
+            XamlRoot = Content.XamlRoot
+        };
+        if (await dialog.ShowAsync() != ContentDialogResult.Primary
+            || string.IsNullOrWhiteSpace(nameBox.Text))
+            return;
+        var profile = selectedProfile with
+        {
+            Id = "custom-" + Guid.NewGuid().ToString("N"),
+            Name = nameBox.Text.Trim(),
+            Description = T($"{selectedProfile.Name} temel alınarak oluşturulan özel profil",
+                $"Custom profile based on {selectedProfile.Name}")
+        };
+        _profiles.Add(profile);
+        ProfileComboBox.SelectedItem = profile;
+        _settings = GetSettingsFromUi() with
+        {
+            DefaultProfileId = profile.Id,
+            CustomProfiles = _settings.CustomProfiles.Append(profile).ToList()
+        };
+        await _settingsStore.SaveAsync(_settings);
+        PreflightText.Text = T($"{profile.Name} profili kaydedildi.", $"Profile {profile.Name} was saved.");
+        PreflightInfoBar.Visibility = Visibility.Visible;
+    }
+
+    private static IReadOnlyList<string> RememberPath(IReadOnlyList<string> paths, string path) =>
+        paths.Where(existing => !existing.Equals(path, StringComparison.OrdinalIgnoreCase))
+            .Prepend(path)
+            .Take(12)
+            .ToList();
+
     private void LoadJobIntoForm(CopyJob job)
     {
         SourceTextBox.Text = job.SourcePath;
         DestinationTextBox.Text = job.DestinationPath;
-        ProfileComboBox.SelectedItem = CopyProfiles.All.FirstOrDefault(profile => profile.Id == job.Profile.Id)
-            ?? CopyProfiles.All[0];
+        ProfileComboBox.SelectedItem = _profiles.FirstOrDefault(profile => profile.Id == job.Profile.Id)
+            ?? _profiles[0];
         SelectChoice(ExistingFileBehaviorComboBox, job.Options.ExistingFiles);
         SelectChoice(VerificationModeComboBox, job.Options.Verification);
         FilePatternsTextBox.Text = string.Join(';', job.Options.FilePatterns);
         ExcludedDirectoriesTextBox.Text = string.Join(';', job.Options.ExcludedDirectories);
-        PreflightText.Text = "Geçmişteki transfer forma yüklendi; kontrol edip kuyruğa ekleyebilirsiniz.";
+        PreflightText.Text = T("Geçmişteki transfer forma yüklendi; kontrol edip kuyruğa ekleyebilirsiniz.",
+            "The historical transfer was loaded into the form; review it and add it to the queue.");
         PreflightInfoBar.Visibility = Visibility.Visible;
     }
 
@@ -691,7 +1264,7 @@ public sealed partial class MainWindow : Window
     {
         if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
         {
-            ValidationText.Text = "Bu transfer için günlük dosyası bulunamadı.";
+            ValidationText.Text = T("Bu transfer için günlük dosyası bulunamadı.", "No log file was found for this transfer.");
             ValidationInfoBar.Visibility = Visibility.Visible;
             return;
         }
@@ -720,7 +1293,10 @@ public sealed partial class MainWindow : Window
             CopyProgressBar.IsIndeterminate = true;
             CopyProgressBar.Value = 0;
             PercentageText.Text = "0%";
-            StatusText.Text = "Kopyalanıyor";
+            SpeedText.Text = T("Hız: —", "Speed: —");
+            RemainingText.Text = T("Kalan: —", "Remaining: —");
+            CompletedFilesText.Text = T("0 dosya", "0 files");
+            StatusText.Text = T("Kopyalanıyor", "Copying");
         }
         else
         {
@@ -741,16 +1317,17 @@ public sealed partial class MainWindow : Window
         PercentageText.Text = finished ? "100%" : "—";
         StatusText.Text = job.Status switch
         {
-            CopyJobStatus.Completed => "Transfer tamamlandı",
-            CopyJobStatus.CompletedWithWarnings => "Uyarılarla tamamlandı",
-            CopyJobStatus.CompletedWithErrors => "İşlem hatalarla birlikte tamamlandı",
-            CopyJobStatus.Cancelled => "Transfer iptal edildi",
-            CopyJobStatus.Paused => "Transfer duraklatıldı",
-            _ => "Transfer başarısız"
+            CopyJobStatus.Completed => T("Transfer tamamlandı", "Transfer completed"),
+            CopyJobStatus.CompletedWithWarnings => T("Uyarılarla tamamlandı", "Completed with warnings"),
+            CopyJobStatus.CompletedWithErrors => T("İşlem hatalarla birlikte tamamlandı", "Operation completed with errors"),
+            CopyJobStatus.Cancelled => T("Transfer iptal edildi", "Transfer cancelled"),
+            CopyJobStatus.Paused => T("Transfer duraklatıldı", "Transfer paused"),
+            _ => T("Transfer başarısız", "Transfer failed")
         };
-        CurrentFileText.Text = job.Summary;
+        CurrentFileText.Text = LocalizeSummary(job.Summary);
         LastJobTitle.Text = StatusText.Text;
-        LastJobDetails.Text = $"{job.SourcePath} → {job.DestinationPath}\n{job.Summary}";
+        LastJobDetails.Text = $"{job.SourcePath} → {job.DestinationPath}\n{LocalizeSummary(job.Summary)}";
+        ExportReportButton.IsEnabled = true;
         ShowFailureDetails(job);
     }
 
@@ -761,19 +1338,72 @@ public sealed partial class MainWindow : Window
             return;
 
         LastJobTitle.Text = GetStatusLabel(job.Status);
-        LastJobDetails.Text = $"{job.SourcePath} → {job.DestinationPath}\n{job.Summary}";
+        LastJobDetails.Text = $"{job.SourcePath} → {job.DestinationPath}\n{LocalizeSummary(job.Summary)}";
+        ExportReportButton.IsEnabled = true;
         ShowFailureDetails(job);
+    }
+
+    private async Task LoadQueueStateAsync()
+    {
+        var recoveredJobs = await _queueStateStore.LoadAsync();
+        var recoveredCount = 0;
+        foreach (var job in recoveredJobs)
+        {
+            if (!Directory.Exists(job.SourcePath))
+                continue;
+            try
+            {
+                var preflight = await _preflightAnalyzer.AnalyzeAsync(
+                    job.SourcePath, job.DestinationPath, job.Options);
+                job.EstimatedTotalBytes = preflight.TotalBytes;
+                job.EstimatedFileCount = preflight.FileCount;
+                var item = new QueueItemViewModel(job, preflight, LocalizationService.IsEnglish(_language));
+                if (job.Status == CopyJobStatus.Paused)
+                    item.SetPaused();
+                else if (job.Status is CopyJobStatus.CompletedWithErrors
+                         or CopyJobStatus.Failed or CopyJobStatus.Cancelled)
+                    item.SetResult(new RobocopyResult(
+                        job.ExitCode ?? 16, job.Status, job.Summary ?? T("Kurtarılan transfer", "Recovered transfer"),
+                        job.Failures, job.FailedItemCount));
+                _queue.Add(item);
+                recoveredCount++;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                // Erişilemeyen bir ağ veya çıkarılabilir disk işi diğer kuyruğun açılmasını engellemez.
+            }
+        }
+        if (recoveredCount > 0)
+        {
+            PreflightText.Text = T($"Önceki oturumdan {recoveredCount:N0} kuyruk işi kurtarıldı.",
+                $"Recovered {recoveredCount:N0} queue jobs from the previous session.");
+            PreflightInfoBar.Visibility = Visibility.Visible;
+            UpdateQueueState();
+        }
+    }
+
+    private async Task SaveQueueStateAsync()
+    {
+        try
+        {
+            await _queueStateStore.SaveAsync(_queue.Select(item => item.Job));
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            ValidationText.Text = T("Kuyruk durumu kaydedilemedi: ", "Could not save queue state: ") + ex.Message;
+            ValidationInfoBar.Visibility = Visibility.Visible;
+        }
     }
 
     private void UpdateQueueState()
     {
-        QueueSummaryText.Text = $"{_queue.Count:N0} iş";
+        QueueSummaryText.Text = T($"{_queue.Count:N0} iş", $"{_queue.Count:N0} jobs");
         EmptyQueueText.Visibility = _queue.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
         var hasRunnableItem = _queue.Any(item => item.Job.Status is CopyJobStatus.Ready or CopyJobStatus.Paused);
         StartQueueButton.IsEnabled = !_isQueueRunning && hasRunnableItem;
         StartQueueButton.Content = _queue.Any(item => item.Job.Status == CopyJobStatus.Paused)
-            ? "Kuyruğa devam et"
-            : "Kuyruğu başlat";
+            ? T("Kuyruğa devam et", "Resume queue")
+            : T("Kuyruğu başlat", "Start queue");
         ClearQueueButton.IsEnabled = !_isQueueRunning && _queue.Count > 0;
         var selected = QueueListView.SelectedItem as QueueItemViewModel;
         var selectedIndex = selected is null ? -1 : _queue.IndexOf(selected);
@@ -787,16 +1417,16 @@ public sealed partial class MainWindow : Window
                 or CopyJobStatus.Paused;
     }
 
-    private static string GetStatusLabel(CopyJobStatus status) => status switch
+    private string GetStatusLabel(CopyJobStatus status) => status switch
     {
-        CopyJobStatus.Ready => "Hazır",
-        CopyJobStatus.Running => "Kopyalanıyor",
-        CopyJobStatus.Paused => "Duraklatıldı",
-        CopyJobStatus.Completed => "Tamamlandı",
-        CopyJobStatus.CompletedWithWarnings => "Uyarılarla tamamlandı",
-        CopyJobStatus.CompletedWithErrors => "Hatalarla tamamlandı",
-        CopyJobStatus.Cancelled => "İptal edildi",
-        _ => "Başarısız"
+        CopyJobStatus.Ready => T("Hazır", "Ready"),
+        CopyJobStatus.Running => T("Kopyalanıyor", "Copying"),
+        CopyJobStatus.Paused => T("Duraklatıldı", "Paused"),
+        CopyJobStatus.Completed => T("Tamamlandı", "Completed"),
+        CopyJobStatus.CompletedWithWarnings => T("Uyarılarla tamamlandı", "Completed with warnings"),
+        CopyJobStatus.CompletedWithErrors => T("Hatalarla tamamlandı", "Completed with errors"),
+        CopyJobStatus.Cancelled => T("İptal edildi", "Cancelled"),
+        _ => T("Başarısız", "Failed")
     };
 
     private void ShowFailureDetails(CopyJob job)
@@ -810,7 +1440,9 @@ public sealed partial class MainWindow : Window
             return;
         }
 
-        FailedItemsCountText.Text = $"Kopyalanamayan öğeler ({Math.Max(job.FailedItemCount, job.Failures.Count):N0})";
+        FailedItemsCountText.Text = T(
+            $"Kopyalanamayan öğeler ({Math.Max(job.FailedItemCount, job.Failures.Count):N0})",
+            $"Items not copied ({Math.Max(job.FailedItemCount, job.Failures.Count):N0})");
         FailedItemsListView.ItemsSource = job.Failures;
         OpenFailureLogButton.IsEnabled = !string.IsNullOrWhiteSpace(job.LogPath) && File.Exists(job.LogPath);
     }
@@ -826,16 +1458,41 @@ public sealed partial class MainWindow : Window
         var package = new DataPackage();
         package.SetText(text);
         Clipboard.SetContent(package);
-        FailureActionText.Text = "Liste panoya kopyalandı.";
+        FailureActionText.Text = T("Liste panoya kopyalandı.", "The list was copied to the clipboard.");
     }
 
     private void OpenFailureLogButton_Click(object sender, RoutedEventArgs e) =>
         OpenLog(_lastResultJob?.LogPath);
 
+    private async void ExportReportButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_lastResultJob is null)
+            return;
+        try
+        {
+            var report = await _reportService.ExportAsync(_lastResultJob);
+            FailureActionText.Text = T($"Rapor oluşturuldu: {report.HtmlPath}", $"Report created: {report.HtmlPath}");
+            PreflightText.Text = T("HTML raporu ve hata CSV dosyası Belgeler klasörüne kaydedildi.",
+                "The HTML report and error CSV were saved to Documents.");
+            PreflightInfoBar.Visibility = Visibility.Visible;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            ValidationText.Text = T("Rapor oluşturulamadı: ", "Could not create the report: ") + ex.Message;
+            ValidationInfoBar.Visibility = Visibility.Visible;
+        }
+    }
+
     private async void RetryFailedButton_Click(object sender, RoutedEventArgs e)
     {
         if (_lastResultJob is null || _isQueueRunning)
             return;
+
+        if (_lastResultJob.Failures.Count > 0)
+        {
+            await RetryOnlyFailedItemsAsync(_lastResultJob);
+            return;
+        }
 
         var item = _queue.FirstOrDefault(candidate => candidate.Job.Id == _lastResultJob.Id);
         if (item is null)
@@ -855,6 +1512,58 @@ public sealed partial class MainWindow : Window
         await RunQueueAsync();
     }
 
+    private async Task RetryOnlyFailedItemsAsync(CopyJob job)
+    {
+        _isQueueRunning = true;
+        _pauseRequested = false;
+        SetRunningState(true);
+        _copyCancellation = new CancellationTokenSource();
+        StatusText.Text = T($"{job.Failures.Count:N0} hatalı öğe yeniden deneniyor",
+            $"Retrying {job.Failures.Count:N0} failed items");
+        var logLines = new ConcurrentQueue<string>();
+        var progress = new Progress<RobocopyProgress>(UpdateProgress);
+        RobocopyResult result;
+        try
+        {
+            result = await _failedItemRetryService.RetryAsync(
+                job, progress, _copyCancellation.Token, logLines.Enqueue);
+        }
+        catch (OperationCanceledException)
+        {
+            result = new RobocopyResult(-1, CopyJobStatus.Cancelled,
+                T("Hatalı öğeleri yeniden deneme işlemi iptal edildi.", "Retrying failed items was cancelled."));
+        }
+
+        job.ExitCode = result.ExitCode;
+        job.Status = result.Status;
+        job.Summary = result.Summary;
+        job.Failures = result.Failures?.ToList() ?? [];
+        job.FailedItemCount = result.FailedItemCount;
+        job.CompletedAt = DateTimeOffset.Now;
+        try { job.LogPath = await _jobLogStore.SaveAsync(job, logLines); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            job.Summary += " Günlük kaydedilemedi: " + ex.Message;
+        }
+        await _historyStore.AddAsync(job);
+        var queueItem = _queue.FirstOrDefault(item => item.Job.Id == job.Id);
+        queueItem?.SetResult(result with { Summary = LocalizeSummary(result.Summary) });
+        ShowResult(job);
+        await SaveQueueStateAsync();
+
+        _isQueueRunning = false;
+        SetRunningState(false);
+        UpdateQueueState();
+        _copyCancellation.Dispose();
+        _copyCancellation = null;
+        if (_settings.NotificationsEnabled)
+            _notificationService.ShowTransferSummary(result.IsSuccessful ? 1 : 0,
+                result.Status == CopyJobStatus.CompletedWithErrors ? 1 : 0,
+                result.Status == CopyJobStatus.Failed ? 1 : 0);
+    }
+
     private sealed record OptionChoice<T>(T Value, string Label);
     private sealed record HistoryChoice(CopyJob Job, string Label);
+    private sealed record SavedLocationChoice(string Path, string Label);
+    private sealed record ScheduleChoice(ScheduledTransfer Schedule, string Label);
 }

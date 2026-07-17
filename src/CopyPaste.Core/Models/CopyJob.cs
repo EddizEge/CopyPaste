@@ -30,9 +30,17 @@ public sealed class CopyJob
     public string? LogPath { get; set; }
     public int FailedItemCount { get; set; }
     public List<CopyFailure> Failures { get; set; } = [];
+    public long EstimatedTotalBytes { get; set; }
+    public int EstimatedFileCount { get; set; }
 }
 
-public sealed record RobocopyProgress(double? Percentage, string Message);
+public sealed record RobocopyProgress(
+    double? Percentage,
+    string Message,
+    long? BytesTransferred = null,
+    double? BytesPerSecond = null,
+    TimeSpan? EstimatedRemaining = null,
+    int? CompletedFiles = null);
 
 public sealed record RobocopyResult(
     int ExitCode,

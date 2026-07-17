@@ -1,8 +1,8 @@
 #ifndef AppVersion
-  #define AppVersion "1.2.0"
+  #define AppVersion "1.3.0"
 #endif
 #ifndef SourceDir
-  #define SourceDir "..\artifacts\CopyPaste-1.2.0-win-x64"
+  #define SourceDir "..\artifacts\CopyPaste-1.3.0-win-x64"
 #endif
 #ifndef OutputDir
   #define OutputDir "..\artifacts"
@@ -57,10 +57,11 @@ Name: "{autoprograms}\CopyPaste"; Filename: "{app}\CopyPaste.App.exe"
 Name: "{autodesktop}\CopyPaste"; Filename: "{app}\CopyPaste.App.exe"; Tasks: desktopicon
 
 [Registry]
-Root: HKCU; Subkey: "Software\Classes\Directory\shell\CopyPaste.Copy"; ValueType: string; ValueName: ""; ValueData: "CopyPaste: Kopyala"; Flags: uninsdeletekey; Tasks: explorer
+Root: HKCU; Subkey: "Software\Classes\Directory\shell\CopyPaste.Copy"; ValueType: string; ValueName: ""; ValueData: "CopyPaste ile kopyala"; Flags: uninsdeletekey; Tasks: explorer
 Root: HKCU; Subkey: "Software\Classes\Directory\shell\CopyPaste.Copy"; ValueType: string; ValueName: "Icon"; ValueData: "{app}\CopyPaste.App.exe"; Tasks: explorer
 Root: HKCU; Subkey: "Software\Classes\Directory\shell\CopyPaste.Copy"; ValueType: string; ValueName: "Position"; ValueData: "Top"; Tasks: explorer
-Root: HKCU; Subkey: "Software\Classes\Directory\shell\CopyPaste.Copy\command"; ValueType: string; ValueName: ""; ValueData: """{app}\CopyPaste.App.exe"" --copy ""%1"""; Tasks: explorer
+Root: HKCU; Subkey: "Software\Classes\Directory\shell\CopyPaste.Copy"; ValueType: string; ValueName: "MultiSelectModel"; ValueData: "Player"; Tasks: explorer
+Root: HKCU; Subkey: "Software\Classes\Directory\shell\CopyPaste.Copy\command"; ValueType: string; ValueName: ""; ValueData: """{app}\CopyPaste.App.exe"" --copy %*"; Tasks: explorer
 Root: HKCU; Subkey: "Software\Classes\Directory\shell\CopyPaste.Paste"; ValueType: string; ValueName: ""; ValueData: "CopyPaste: Buraya yapıştır"; Flags: uninsdeletekey; Tasks: explorer
 Root: HKCU; Subkey: "Software\Classes\Directory\shell\CopyPaste.Paste"; ValueType: string; ValueName: "Icon"; ValueData: "{app}\CopyPaste.App.exe"; Tasks: explorer
 Root: HKCU; Subkey: "Software\Classes\Directory\shell\CopyPaste.Paste"; ValueType: string; ValueName: "Position"; ValueData: "Top"; Tasks: explorer
@@ -72,3 +73,6 @@ Root: HKCU; Subkey: "Software\Classes\Directory\Background\shell\CopyPaste.Paste
 
 [Run]
 Filename: "{app}\CopyPaste.App.exe"; Description: "CopyPaste'i başlat"; Flags: nowait postinstall skipifsilent
+
+[UninstallRun]
+Filename: "{app}\CopyPaste.App.exe"; Parameters: "--uninstall-cleanup"; Flags: runhidden waituntilterminated skipifdoesntexist; RunOnceId: "CopyPasteScheduledTaskCleanup"

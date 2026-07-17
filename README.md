@@ -2,7 +2,20 @@
 
 CopyPaste, Windows'un yerleşik Robocopy motorunu modern ve güvenli bir arayüzle sunan dosya transfer uygulamasıdır.
 
-## CopyPaste 1.2
+## CopyPaste 1.3
+
+- Yalnızca kopyalanamayan dosyaları yeniden deneme
+- GitHub güncellemesini arka planda indirme ve zorunlu SHA-256 doğrulaması
+- Beklenmedik kapanma sonrası kuyruğu duraklatılmış olarak kurtarma
+- Favori klasörler, son kullanılan yollar ve özel profiller
+- Çalışma zamanında Türkçe/İngilizce arayüz değişimi
+- Canlı hız, aktarılan bayt, tamamlanan dosya ve tahmini kalan süre
+- HTML işlem raporu ve CSV hata listesi
+- NAS/ağ bağlantısı kopunca bekleme ve `/Z` ile otomatik sürdürme
+- Windows Görev Zamanlayıcı ile günlük transferler
+- Birden fazla Explorer klasörünü tek seferde kuyruğa gönderme
+- İmzalı MSIX sürümünde Windows 11 modern sağ tık menüsü
+- Çökme tanılama paketi ve aktif transferde güvenli çıkış onayı
 
 - Web sitesiyle uyumlu koyu, kart tabanlı ve mor vurgulu yeni arayüz
 - Görev çubuğu, pencere, EXE ve kurulumda kullanılan yeni CopyPaste simgesi
@@ -91,13 +104,24 @@ Dağıtılabilir paketi üretmek için:
 ```powershell
 .\tools\Build-Release.ps1
 .\tools\Build-Installer.ps1
+.\tools\Build-Msix.ps1
 ```
 
-Önerilen dağıtım dosyası `artifacts\CopyPaste-1.2.0-Setup.exe` kurulumudur. Alternatif olarak
-`artifacts\CopyPaste-1.2.0-win-x64.zip` arşivini bir klasöre çıkarıp `CopyPaste.App.exe`
+Önerilen dağıtım dosyası `artifacts\CopyPaste-1.3.0-Setup.exe` kurulumudur. Alternatif olarak
+`artifacts\CopyPaste-1.3.0-win-x64.zip` arşivini bir klasöre çıkarıp `CopyPaste.App.exe`
 dosyasını doğrudan çalıştırabilirsiniz. Explorer sağ tık menüsü uygulamadaki
 “Sağ tık menüsünü ekle” düğmesiyle kullanıcı hesabına kaydedilir; Windows 11'de klasik
 menüler “Daha fazla seçenek göster” altında görüntülenir.
+
+Kurumsal sessiz kurulum örneği:
+
+```powershell
+.\CopyPaste-1.3.0-Setup.exe /LANG=turkish /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /TASKS="explorer"
+```
+
+İmzalı MSIX paketi `IExplorerCommand` tabanlı modern Windows 11 menüsünü içerir. CI üzerinde
+`WINDOWS_CERTIFICATE_BASE64` ve `WINDOWS_CERTIFICATE_PASSWORD` sırları tanımlandığında EXE,
+kurulum ve MSIX otomatik imzalanır. Sertifika yoksa kullanılabilir olmayan imzasız MSIX Release'a eklenmez.
 
 Uygulama Windows 10 1809 ve üzerini hedefler. Robocopy Windows ile birlikte gelir; harici bir kopyalama aracı kurulmaz.
 
@@ -111,6 +135,6 @@ değerini ilk Release oluşturulmadan önce değiştirin.
 - `.github/workflows/pages.yml`, ana dal GitHub'a gönderildiğinde siteyi GitHub Pages'a yayınlar.
 - `.github/workflows/release.yml`, `v*` biçimindeki sürüm etiketi gönderildiğinde testleri çalıştırır,
   kurulum EXE'si ile taşınabilir paketi üretir ve SHA-256 özetleriyle GitHub Release'a ekler.
-- Yeni bir sürüm yayımlamak için proje ve manifest sürümünü artırıp `v1.2.0` benzeri aynı sürüm
+- Yeni bir sürüm yayımlamak için proje ve manifest sürümünü artırıp `v1.3.0` benzeri aynı sürüm
   etiketi oluşturun. Uygulama öncelikle `CopyPaste-*-Setup.exe`, bulunamazsa taşınabilir ZIP
   dosyasını indirme hedefi olarak kullanıcıya sunar.

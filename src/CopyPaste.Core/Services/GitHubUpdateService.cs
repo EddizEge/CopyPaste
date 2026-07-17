@@ -22,7 +22,9 @@ public sealed record UpdateCheckResult(
     Uri? ReleasePageUri = null,
     Uri? DownloadUri = null,
     string? ReleaseNotes = null,
-    string? Error = null)
+    string? Error = null,
+    string? AssetName = null,
+    string? Sha256Digest = null)
 {
     public bool HasUpdate => Status == UpdateCheckStatus.UpdateAvailable;
 }
@@ -42,7 +44,7 @@ public sealed class GitHubUpdateService
         _owner = owner;
         _repository = repository;
         if (!_httpClient.DefaultRequestHeaders.UserAgent.Any())
-            _httpClient.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("CopyPaste", "1.1"));
+            _httpClient.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("CopyPaste", "1.3"));
         _httpClient.DefaultRequestHeaders.Accept.Add(
             new MediaTypeWithQualityHeaderValue("application/vnd.github+json"));
     }
@@ -120,18 +122,19 @@ public sealed class GitHubUpdateService
 
         var tagName = tagElement.GetString();
         var releasePage = TryGetUri(root, "html_url");
-        var download = FindReleaseAsset(root, ProductInfo.InstallerAssetSuffix)
-            ?? FindReleaseAsset(root, ProductInfo.PortableAssetSuffix)
-            ?? releasePage;
+        var asset = FindReleaseAsset(root, ProductInfo.InstallerAssetSuffix)
+            ?? FindReleaseAsset(root, ProductInfo.PortableAssetSuffix);
+        var download = asset?.DownloadUri ?? releasePage;
         var releaseNotes = root.TryGetProperty("body", out var body) ? body.GetString() : null;
         var status = latestVersion > NormalizeVersion(currentVersion)
             ? UpdateCheckStatus.UpdateAvailable
             : UpdateCheckStatus.UpToDate;
         return new(status, NormalizeVersion(currentVersion), latestVersion, tagName,
-            releasePage, download, releaseNotes);
+            releasePage, download, releaseNotes, AssetName: asset?.Name,
+            Sha256Digest: asset?.Sha256Digest);
     }
 
-    private static Uri? FindReleaseAsset(JsonElement root, string suffix)
+    private static ReleaseAssetInfo? FindReleaseAsset(JsonElement root, string suffix)
     {
         if (!root.TryGetProperty("assets", out var assets) || assets.ValueKind != JsonValueKind.Array)
             return null;
@@ -142,8 +145,12 @@ public sealed class GitHubUpdateService
             if (name?.EndsWith(suffix, StringComparison.OrdinalIgnoreCase) != true)
                 continue;
             var uri = TryGetUri(asset, "browser_download_url");
-            if (uri is not null)
-                return uri;
+            if (uri is null)
+                continue;
+            var digest = asset.TryGetProperty("digest", out var digestElement)
+                ? digestElement.GetString()
+                : null;
+            return new ReleaseAssetInfo(name!, uri, digest);
         }
         return null;
     }
@@ -167,4 +174,6 @@ public sealed class GitHubUpdateService
         Math.Max(0, version.Minor),
         Math.Max(0, version.Build),
         Math.Max(0, version.Revision));
+
+    private sealed record ReleaseAssetInfo(string Name, Uri DownloadUri, string? Sha256Digest);
 }

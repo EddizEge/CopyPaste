@@ -7,6 +7,24 @@ const translations = {
   }
 };
 
+Object.assign(translations.tr, {
+  heroBody: "Robocopy’nin gücünü modern bir arayüz, akıllı kuyruklar, hata kurtarma ve SHA-256 doğrulamasıyla kullanın.",
+  featureRecovery: "Akıllı hata kurtarma",
+  featureRecoveryBody: "Binlerce dosya içindeki yalnızca hatalı öğeleri görün ve yeniden deneyin.",
+  featureSchedule: "Zamanlama ve ağ desteği",
+  featureScheduleBody: "Günlük görevler oluşturun; NAS veya ağ bağlantısı geri geldiğinde devam edin.",
+  updateNote: "↻ Güncellemeler GitHub Releases üzerinden SHA-256 ile doğrulanarak güvenle indirilir."
+});
+
+Object.assign(translations.en, {
+  heroBody: "Use the power of Robocopy through a modern interface, smart queues, error recovery, and SHA-256 verification.",
+  featureRecovery: "Smart error recovery",
+  featureRecoveryBody: "Find and retry only the failed items among thousands of files.",
+  featureSchedule: "Scheduling and network support",
+  featureScheduleBody: "Create daily tasks and continue when a NAS or network connection returns.",
+  updateNote: "↻ Updates are securely downloaded from GitHub Releases and verified with SHA-256."
+});
+
 translations.tr.trustOpen = "GitHub Releases";
 translations.en.trustOpen = "GitHub Releases";
 

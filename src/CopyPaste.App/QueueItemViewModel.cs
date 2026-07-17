@@ -7,16 +7,19 @@ namespace CopyPaste.App;
 
 public sealed class QueueItemViewModel : INotifyPropertyChanged
 {
-    private string _statusLabel = "Bekliyor";
+    private string _statusLabel;
     private string _detail;
     private double _progress;
     private bool _isSelected;
+    private bool _english;
 
-    public QueueItemViewModel(CopyJob job, CopyPreflightResult preflight)
+    public QueueItemViewModel(CopyJob job, CopyPreflightResult preflight, bool english = false)
     {
         Job = job;
         Preflight = preflight;
-        _detail = $"{preflight.FileCount:N0} dosya • {FormatBytes(preflight.TotalBytes)} • " +
+        _english = english;
+        _statusLabel = T("Bekliyor", "Waiting");
+        _detail = $"{preflight.FileCount:N0} {T("dosya", "files")} • {FormatBytes(preflight.TotalBytes)} • " +
                   $"{job.Profile.Name} • {OptionsLabel(job.Options)}";
     }
 
@@ -51,7 +54,7 @@ public sealed class QueueItemViewModel : INotifyPropertyChanged
 
     public void SetRunning(double? percentage = null, string? detail = null)
     {
-        StatusLabel = "Kopyalanıyor";
+        StatusLabel = T("Kopyalanıyor", "Copying");
         if (percentage is { } value)
             Progress = value;
         if (!string.IsNullOrWhiteSpace(detail))
@@ -60,7 +63,11 @@ public sealed class QueueItemViewModel : INotifyPropertyChanged
 
     public void SetVerifying(string? relativePath = null)
     {
-        StatusLabel = "Doğrulanıyor";
+        // Progress<T> callbacks are posted to the UI queue. Ignore a late callback
+        // after the final result has already changed the job state.
+        if (Job.Status != CopyJobStatus.Running)
+            return;
+        StatusLabel = T("Doğrulanıyor", "Verifying");
         if (!string.IsNullOrWhiteSpace(relativePath))
             Detail = relativePath;
     }
@@ -68,8 +75,9 @@ public sealed class QueueItemViewModel : INotifyPropertyChanged
     public void SetPaused()
     {
         Job.Status = CopyJobStatus.Paused;
-        StatusLabel = "Duraklatıldı";
-        Detail = "Devam ettirildiğinde yeniden başlatılabilir Robocopy modu kaldığı yerden sürdürecek.";
+        StatusLabel = T("Duraklatıldı", "Paused");
+        Detail = T("Devam ettirildiğinde yeniden başlatılabilir Robocopy modu kaldığı yerden sürdürecek.",
+            "Restartable Robocopy mode will continue when resumed.");
     }
 
     public void ResetForRetry()
@@ -80,8 +88,8 @@ public sealed class QueueItemViewModel : INotifyPropertyChanged
         Job.Summary = null;
         Job.FailedItemCount = 0;
         Job.Failures.Clear();
-        StatusLabel = "Bekliyor";
-        Detail = $"{Preflight.FileCount:N0} dosya • {FormatBytes(Preflight.TotalBytes)} • " +
+        StatusLabel = T("Bekliyor", "Waiting");
+        Detail = $"{Preflight.FileCount:N0} {T("dosya", "files")} • {FormatBytes(Preflight.TotalBytes)} • " +
                  $"{Job.Profile.Name} • {OptionsLabel(Job.Options)}";
         Progress = 0;
     }
@@ -90,17 +98,33 @@ public sealed class QueueItemViewModel : INotifyPropertyChanged
     {
         StatusLabel = result.Status switch
         {
-            CopyJobStatus.Completed => "Tamamlandı",
-            CopyJobStatus.CompletedWithWarnings => "Uyarılarla tamamlandı",
-            CopyJobStatus.CompletedWithErrors => "Hatalarla tamamlandı",
-            CopyJobStatus.Cancelled => "İptal edildi",
-            _ => "Başarısız"
+            CopyJobStatus.Completed => T("Tamamlandı", "Completed"),
+            CopyJobStatus.CompletedWithWarnings => T("Uyarılarla tamamlandı", "Completed with warnings"),
+            CopyJobStatus.CompletedWithErrors => T("Hatalarla tamamlandı", "Completed with errors"),
+            CopyJobStatus.Cancelled => T("İptal edildi", "Cancelled"),
+            _ => T("Başarısız", "Failed")
         };
         Progress = result.IsFinished ? 100 : Progress;
         Detail = result.Summary;
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
+
+    public void SetLanguage(bool english)
+    {
+        _english = english;
+        StatusLabel = Job.Status switch
+        {
+            CopyJobStatus.Ready => T("Bekliyor", "Waiting"),
+            CopyJobStatus.Running => T("Kopyalanıyor", "Copying"),
+            CopyJobStatus.Paused => T("Duraklatıldı", "Paused"),
+            CopyJobStatus.Completed => T("Tamamlandı", "Completed"),
+            CopyJobStatus.CompletedWithWarnings => T("Uyarılarla tamamlandı", "Completed with warnings"),
+            CopyJobStatus.CompletedWithErrors => T("Hatalarla tamamlandı", "Completed with errors"),
+            CopyJobStatus.Cancelled => T("İptal edildi", "Cancelled"),
+            _ => T("Başarısız", "Failed")
+        };
+    }
 
     private bool SetField<T>(ref T field, T value, [CallerMemberName] string? propertyName = null)
     {
@@ -127,20 +151,22 @@ public sealed class QueueItemViewModel : INotifyPropertyChanged
         return $"{value:0.#} {units[unit]}";
     }
 
-    private static string OptionsLabel(CopyJobOptions options)
+    private string OptionsLabel(CopyJobOptions options)
     {
         var existing = options.ExistingFiles switch
         {
-            ExistingFileBehavior.Skip => "mevcutları atla",
-            ExistingFileBehavior.Overwrite => "üzerine yaz",
-            _ => "güncelle"
+            ExistingFileBehavior.Skip => T("mevcutları atla", "skip existing"),
+            ExistingFileBehavior.Overwrite => T("üzerine yaz", "overwrite"),
+            _ => T("güncelle", "update")
         };
         var verification = options.Verification switch
         {
             VerificationMode.Sha256 => "SHA-256",
-            VerificationMode.Size => "boyut doğrulama",
-            _ => "doğrulama yok"
+            VerificationMode.Size => T("boyut doğrulama", "size verification"),
+            _ => T("doğrulama yok", "no verification")
         };
         return $"{existing} • {verification}";
     }
+
+    private string T(string turkish, string english) => _english ? english : turkish;
 }
