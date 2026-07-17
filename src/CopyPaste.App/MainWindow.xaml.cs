@@ -8,6 +8,7 @@ using CopyPaste.Core.Services;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.Win32;
 using Windows.ApplicationModel.DataTransfer;
 using Windows.Storage;
 using Windows.Storage.Pickers;
@@ -129,7 +130,8 @@ public sealed partial class MainWindow : Window
         {
             await RunQueueAsync();
         }
-        await CheckForUpdatesAsync(manual: false);
+        if (_settings.CheckForUpdatesOnStartup)
+            await CheckForUpdatesAsync(manual: false);
     }
 
     private void RootGrid_Loaded(object sender, RoutedEventArgs e)
@@ -149,12 +151,15 @@ public sealed partial class MainWindow : Window
             return;
 
         _isUpdateCheckRunning = true;
-        CheckUpdatesButton.IsEnabled = false;
-        CheckUpdatesButton.Content = T("Kontrol ediliyor…", "Checking…");
+        if (manual)
+        {
+            CheckUpdatesButton.IsEnabled = false;
+            CheckUpdatesButton.Content = T("Kontrol ediliyor…", "Checking…");
+        }
         try
         {
             var currentVersion = Assembly.GetExecutingAssembly().GetName().Version
-                ?? new Version(1, 3, 1, 0);
+                ?? new Version(1, 3, 2, 0);
             var result = await _updateService.CheckAsync(currentVersion);
             switch (result.Status)
             {
@@ -195,8 +200,11 @@ public sealed partial class MainWindow : Window
         finally
         {
             _isUpdateCheckRunning = false;
-            CheckUpdatesButton.IsEnabled = true;
-            CheckUpdatesButton.Content = T("Güncellemeleri kontrol et", "Check for updates");
+            if (manual)
+            {
+                CheckUpdatesButton.IsEnabled = true;
+                CheckUpdatesButton.Content = T("Güncellemeleri kontrol et", "Check for updates");
+            }
         }
     }
 
@@ -959,33 +967,23 @@ public sealed partial class MainWindow : Window
                 Header = T("Güncellemeleri güvenle arka planda indir", "Securely download updates in the background"),
                 IsOn = _settings.AutoDownloadUpdates
             };
-            var continueOnError = new ToggleSwitch
+            var checkUpdatesOnStartup = new ToggleSwitch
             {
-                Header = T("Hata olsa da sıradaki işe geç", "Continue with the next job after an error"),
-                IsOn = _settings.ContinueQueueOnError
+                Header = T("Açılışta güncellemeleri kontrol et", "Check for updates at startup"),
+                IsOn = _settings.CheckForUpdatesOnStartup
             };
-            var waitForNetwork = new ToggleSwitch
+            var startWithWindows = new ToggleSwitch
             {
-                Header = T("Ağ koparsa bağlantının geri gelmesini bekle", "Wait for the network to return"),
-                IsOn = _settings.WaitForNetwork
-            };
-            var networkWait = new NumberBox
-            {
-                Header = T("Ağ için en fazla bekleme (dakika)", "Maximum network wait (minutes)"),
-                Minimum = 1,
-                Maximum = 1440,
-                Value = _settings.NetworkRetryMinutes,
-                SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Compact,
-                HorizontalAlignment = HorizontalAlignment.Stretch
+                Header = T("Windows açıldığında CopyPaste'i başlat", "Start CopyPaste when Windows starts"),
+                IsOn = _settings.StartWithWindows
             };
             var panel = new StackPanel { Spacing = 14, MinWidth = 430 };
             panel.Children.Add(language);
             panel.Children.Add(notifications);
             panel.Children.Add(minimizeOnClose);
             panel.Children.Add(autoUpdates);
-            panel.Children.Add(continueOnError);
-            panel.Children.Add(waitForNetwork);
-            panel.Children.Add(networkWait);
+            panel.Children.Add(checkUpdatesOnStartup);
+            panel.Children.Add(startWithWindows);
 
             var dialog = new ContentDialog
             {
@@ -1005,14 +1003,12 @@ public sealed partial class MainWindow : Window
                 NotificationsEnabled = notifications.IsOn,
                 MinimizeToTrayWhileRunning = minimizeOnClose.IsOn,
                 AutoDownloadUpdates = autoUpdates.IsOn,
-                ContinueQueueOnError = continueOnError.IsOn,
-                WaitForNetwork = waitForNetwork.IsOn,
-                NetworkRetryMinutes = double.IsNaN(networkWait.Value)
-                    ? 15
-                    : (int)Math.Clamp(networkWait.Value, 1, 1440)
+                CheckForUpdatesOnStartup = checkUpdatesOnStartup.IsOn,
+                StartWithWindows = startWithWindows.IsOn
             };
             ApplySettingsToUi(_settings);
             await _settingsStore.SaveAsync(_settings);
+            ApplyStartWithWindowsSetting(_settings.StartWithWindows);
             ApplyLanguage(_settings.Language);
             PreflightText.Text = T("Çalışma ayarları kaydedildi.", "Application settings saved.");
             PreflightInfoBar.Visibility = Visibility.Visible;
@@ -1055,14 +1051,16 @@ public sealed partial class MainWindow : Window
         FilePatterns = FilePatternsTextBox.Text,
         ExcludedDirectories = ExcludedDirectoriesTextBox.Text,
         ContinueQueueOnError = ContinueOnErrorToggle.IsOn,
-        NotificationsEnabled = NotificationsToggle.IsOn,
-        MinimizeToTrayWhileRunning = MinimizeOnCloseToggle.IsOn,
-        AutoDownloadUpdates = AutoUpdateToggle.IsOn,
+        NotificationsEnabled = _settings.NotificationsEnabled,
+        MinimizeToTrayWhileRunning = _settings.MinimizeToTrayWhileRunning,
+        AutoDownloadUpdates = _settings.AutoDownloadUpdates,
+        CheckForUpdatesOnStartup = _settings.CheckForUpdatesOnStartup,
+        StartWithWindows = _settings.StartWithWindows,
         WaitForNetwork = WaitForNetworkToggle.IsOn,
         NetworkRetryMinutes = double.IsNaN(NetworkRetryMinutesBox.Value)
             ? 15
             : (int)Math.Clamp(NetworkRetryMinutesBox.Value, 1, 1440),
-        Language = (LanguageComboBox.SelectedItem as OptionChoice<string>)?.Value ?? _language,
+        Language = _settings.Language,
         FavoriteLocations = _settings.FavoriteLocations,
         RecentSources = _settings.RecentSources,
         RecentDestinations = _settings.RecentDestinations,
@@ -1078,14 +1076,8 @@ public sealed partial class MainWindow : Window
         FilePatternsTextBox.Text = string.IsNullOrWhiteSpace(settings.FilePatterns) ? "*" : settings.FilePatterns;
         ExcludedDirectoriesTextBox.Text = settings.ExcludedDirectories;
         ContinueOnErrorToggle.IsOn = settings.ContinueQueueOnError;
-        NotificationsToggle.IsOn = settings.NotificationsEnabled;
-        MinimizeOnCloseToggle.IsOn = settings.MinimizeToTrayWhileRunning;
-        AutoUpdateToggle.IsOn = settings.AutoDownloadUpdates;
         WaitForNetworkToggle.IsOn = settings.WaitForNetwork;
         NetworkRetryMinutesBox.Value = Math.Clamp(settings.NetworkRetryMinutes, 1, 1440);
-        LanguageComboBox.SelectedItem = LanguageComboBox.Items.Cast<object>()
-            .OfType<OptionChoice<string>>()
-            .FirstOrDefault(choice => choice.Value.Equals(settings.Language, StringComparison.OrdinalIgnoreCase));
     }
 
     private static void SelectChoice<T>(ComboBox comboBox, T value) where T : struct, Enum
@@ -1140,15 +1132,16 @@ public sealed partial class MainWindow : Window
         };
         SelectChoice(VerificationModeComboBox, verification);
 
-        var selectedLanguage = (LanguageComboBox.SelectedItem as OptionChoice<string>)?.Value ?? _language;
-        LanguageComboBox.ItemsSource = new[]
-        {
-            new OptionChoice<string>("tr-TR", T("Türkçe", "Turkish")),
-            new OptionChoice<string>("en-US", T("İngilizce", "English"))
-        };
-        LanguageComboBox.SelectedItem = LanguageComboBox.Items.Cast<object>()
-            .OfType<OptionChoice<string>>()
-            .First(choice => choice.Value.Equals(selectedLanguage, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static void ApplyStartWithWindowsSetting(bool enabled)
+    {
+        using var key = Registry.CurrentUser.CreateSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run");
+        const string valueName = "CopyPaste";
+        if (enabled)
+            key.SetValue(valueName, $"\"{Environment.ProcessPath}\"");
+        else
+            key.DeleteValue(valueName, throwOnMissingValue: false);
     }
 
     private IEnumerable<CopyProfile> GetBuiltInProfiles() => LocalizationService.IsEnglish(_language)

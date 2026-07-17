@@ -1,5 +1,11 @@
 # Değişiklik günlüğü
 
+## 1.3.2
+
+- Transfer seçenekleri ile uygulama tercihleri birbirinden ayrıldı.
+- Ayarlar'a Windows ile başlatma ve açılışta güncelleme denetimi seçenekleri eklendi.
+- Otomatik güncelleme denetiminin düğmede “Kontrol ediliyor…” göstermesi kaldırıldı.
+
 ## 1.3.1
 
 - Başlık çubuğundaki gereksiz özel küçültme düğmesi kaldırıldı.

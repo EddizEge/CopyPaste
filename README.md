@@ -107,8 +107,8 @@ Dağıtılabilir paketi üretmek için:
 .\tools\Build-Msix.ps1
 ```
 
-Önerilen dağıtım dosyası `artifacts\CopyPaste-1.3.1-Setup.exe` kurulumudur. Alternatif olarak
-`artifacts\CopyPaste-1.3.1-win-x64.zip` arşivini bir klasöre çıkarıp `CopyPaste.App.exe`
+Önerilen dağıtım dosyası `artifacts\CopyPaste-1.3.2-Setup.exe` kurulumudur. Alternatif olarak
+`artifacts\CopyPaste-1.3.2-win-x64.zip` arşivini bir klasöre çıkarıp `CopyPaste.App.exe`
 dosyasını doğrudan çalıştırabilirsiniz. Explorer sağ tık menüsü uygulamadaki
 “Sağ tık menüsünü ekle” düğmesiyle kullanıcı hesabına kaydedilir; Windows 11'de klasik
 menüler “Daha fazla seçenek göster” altında görüntülenir.
@@ -116,7 +116,7 @@ menüler “Daha fazla seçenek göster” altında görüntülenir.
 Kurumsal sessiz kurulum örneği:
 
 ```powershell
-.\CopyPaste-1.3.1-Setup.exe /LANG=turkish /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /TASKS="explorer"
+.\CopyPaste-1.3.2-Setup.exe /LANG=turkish /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /TASKS="explorer"
 ```
 
 İmzalı MSIX paketi `IExplorerCommand` tabanlı modern Windows 11 menüsünü içerir. CI üzerinde
@@ -135,6 +135,6 @@ değerini ilk Release oluşturulmadan önce değiştirin.
 - `.github/workflows/pages.yml`, ana dal GitHub'a gönderildiğinde siteyi GitHub Pages'a yayınlar.
 - `.github/workflows/release.yml`, `v*` biçimindeki sürüm etiketi gönderildiğinde testleri çalıştırır,
   kurulum EXE'si ile taşınabilir paketi üretir ve SHA-256 özetleriyle GitHub Release'a ekler.
-- Yeni bir sürüm yayımlamak için proje ve manifest sürümünü artırıp `v1.3.1` benzeri aynı sürüm
+- Yeni bir sürüm yayımlamak için proje ve manifest sürümünü artırıp `v1.3.2` benzeri aynı sürüm
   etiketi oluşturun. Uygulama öncelikle `CopyPaste-*-Setup.exe`, bulunamazsa taşınabilir ZIP
   dosyasını indirme hedefi olarak kullanıcıya sunar.
