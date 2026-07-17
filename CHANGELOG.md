@@ -1,5 +1,11 @@
 # Değişiklik günlüğü
 
+## 1.3.1
+
+- Başlık çubuğundaki gereksiz özel küçültme düğmesi kaldırıldı.
+- Ayarlar düğmesi; dil, bildirim, tepsi, güncelleme, hata ve ağ tercihlerini içeren çalışan bir pencereye dönüştürüldü.
+- Arka plandaki güncelleme indirmesi sırasında düğmenin sürekli “Kontrol ediliyor…” göstermesi düzeltildi.
+
 ## 1.3.0
 
 - Hatalı dosya bazlı yeniden deneme ve Türkçe dosya adları için OEM Robocopy çıktı düzeltmesi.

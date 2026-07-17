@@ -50,6 +50,7 @@ public sealed partial class MainWindow : Window
     private bool _isUpdateCheckRunning;
     private bool _closeConfirmed;
     private bool _closeDialogOpen;
+    private bool _settingsDialogOpen;
     private bool _rootLoaded;
     private CopyJob? _lastResultJob;
     private readonly CopyJob? _startupJob;
@@ -153,7 +154,7 @@ public sealed partial class MainWindow : Window
         try
         {
             var currentVersion = Assembly.GetExecutingAssembly().GetName().Version
-                ?? new Version(1, 3, 0, 0);
+                ?? new Version(1, 3, 1, 0);
             var result = await _updateService.CheckAsync(currentVersion);
             switch (result.Status)
             {
@@ -170,7 +171,7 @@ public sealed partial class MainWindow : Window
                     if (_settings.NotificationsEnabled)
                         _notificationService.ShowUpdateAvailable(result.TagName ?? result.LatestVersion?.ToString(3) ?? "Yeni");
                     if (_settings.AutoDownloadUpdates && !string.IsNullOrWhiteSpace(result.Sha256Digest))
-                        await DownloadUpdateAsync(result, automatic: true);
+                        _ = DownloadUpdateAsync(result, automatic: true);
                     break;
                 case UpdateCheckStatus.UpToDate when manual:
                     _availableUpdate = null;
@@ -628,15 +629,6 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    private void TrayButton_Click(object sender, RoutedEventArgs e)
-    {
-        if (!_trayIcon.HideToTray())
-        {
-            ValidationText.Text = T("Sistem tepsisi simgesi oluşturulamadı.", "Could not create the system tray icon.");
-            ValidationInfoBar.Visibility = Visibility.Visible;
-        }
-    }
-
     private void ExplorerIntegrationButton_Click(object sender, RoutedEventArgs e)
     {
         try
@@ -929,10 +921,106 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    private void SettingsButton_Click(object sender, RoutedEventArgs e)
+    private async void SettingsButton_Click(object sender, RoutedEventArgs e)
     {
-        ContinueOnErrorToggle.StartBringIntoView();
-        ContinueOnErrorToggle.Focus(FocusState.Programmatic);
+        if (_settingsDialogOpen)
+            return;
+
+        _settingsDialogOpen = true;
+        try
+        {
+            var language = new ComboBox
+            {
+                Header = T("Dil", "Language"),
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+                ItemsSource = new[]
+                {
+                    new OptionChoice<string>("tr-TR", T("Türkçe", "Turkish")),
+                    new OptionChoice<string>("en-US", T("İngilizce", "English"))
+                },
+                DisplayMemberPath = "Label"
+            };
+            language.SelectedItem = language.Items.Cast<object>()
+                .OfType<OptionChoice<string>>()
+                .First(choice => choice.Value.Equals(_settings.Language, StringComparison.OrdinalIgnoreCase));
+
+            var notifications = new ToggleSwitch
+            {
+                Header = T("Transfer sonunda bildirim göster", "Show a notification when a transfer finishes"),
+                IsOn = _settings.NotificationsEnabled
+            };
+            var minimizeOnClose = new ToggleSwitch
+            {
+                Header = T("Aktif işte kapatılırsa tepsiye küçült", "Minimize to tray when closed during a transfer"),
+                IsOn = _settings.MinimizeToTrayWhileRunning
+            };
+            var autoUpdates = new ToggleSwitch
+            {
+                Header = T("Güncellemeleri güvenle arka planda indir", "Securely download updates in the background"),
+                IsOn = _settings.AutoDownloadUpdates
+            };
+            var continueOnError = new ToggleSwitch
+            {
+                Header = T("Hata olsa da sıradaki işe geç", "Continue with the next job after an error"),
+                IsOn = _settings.ContinueQueueOnError
+            };
+            var waitForNetwork = new ToggleSwitch
+            {
+                Header = T("Ağ koparsa bağlantının geri gelmesini bekle", "Wait for the network to return"),
+                IsOn = _settings.WaitForNetwork
+            };
+            var networkWait = new NumberBox
+            {
+                Header = T("Ağ için en fazla bekleme (dakika)", "Maximum network wait (minutes)"),
+                Minimum = 1,
+                Maximum = 1440,
+                Value = _settings.NetworkRetryMinutes,
+                SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Compact,
+                HorizontalAlignment = HorizontalAlignment.Stretch
+            };
+            var panel = new StackPanel { Spacing = 14, MinWidth = 430 };
+            panel.Children.Add(language);
+            panel.Children.Add(notifications);
+            panel.Children.Add(minimizeOnClose);
+            panel.Children.Add(autoUpdates);
+            panel.Children.Add(continueOnError);
+            panel.Children.Add(waitForNetwork);
+            panel.Children.Add(networkWait);
+
+            var dialog = new ContentDialog
+            {
+                XamlRoot = RootGrid.XamlRoot,
+                Title = T("Ayarlar", "Settings"),
+                Content = panel,
+                PrimaryButtonText = T("Kaydet", "Save"),
+                CloseButtonText = T("İptal", "Cancel"),
+                DefaultButton = ContentDialogButton.Primary
+            };
+            if (await dialog.ShowAsync() != ContentDialogResult.Primary)
+                return;
+
+            _settings = _settings with
+            {
+                Language = (language.SelectedItem as OptionChoice<string>)?.Value ?? _settings.Language,
+                NotificationsEnabled = notifications.IsOn,
+                MinimizeToTrayWhileRunning = minimizeOnClose.IsOn,
+                AutoDownloadUpdates = autoUpdates.IsOn,
+                ContinueQueueOnError = continueOnError.IsOn,
+                WaitForNetwork = waitForNetwork.IsOn,
+                NetworkRetryMinutes = double.IsNaN(networkWait.Value)
+                    ? 15
+                    : (int)Math.Clamp(networkWait.Value, 1, 1440)
+            };
+            ApplySettingsToUi(_settings);
+            await _settingsStore.SaveAsync(_settings);
+            ApplyLanguage(_settings.Language);
+            PreflightText.Text = T("Çalışma ayarları kaydedildi.", "Application settings saved.");
+            PreflightInfoBar.Visibility = Visibility.Visible;
+        }
+        finally
+        {
+            _settingsDialogOpen = false;
+        }
     }
 
     private async void SaveSettingsButton_Click(object sender, RoutedEventArgs e)
