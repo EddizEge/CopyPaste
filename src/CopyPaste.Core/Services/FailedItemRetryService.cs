@@ -1,4 +1,6 @@
 using CopyPaste.Core.Models;
+using System.Globalization;
+using System.Text;
 
 namespace CopyPaste.Core.Services;
 
@@ -64,9 +66,10 @@ public sealed class FailedItemRetryService
             {
                 continue;
             }
-            if (!seen.Add(failedPath) || !IsWithinRoot(failedPath, sourceRoot))
+            if (!IsWithinRoot(failedPath, sourceRoot))
                 continue;
-            if (!File.Exists(failedPath) && !Directory.Exists(failedPath))
+            failedPath = ResolveExistingPath(failedPath, sourceRoot) ?? failedPath;
+            if (!seen.Add(failedPath) || (!File.Exists(failedPath) && !Directory.Exists(failedPath)))
                 continue;
 
             var relativePath = Path.GetRelativePath(sourceRoot, failedPath);
@@ -101,4 +104,50 @@ public sealed class FailedItemRetryService
     private static bool IsWithinRoot(string path, string root) =>
         path.Equals(root, StringComparison.OrdinalIgnoreCase)
         || path.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
+
+    private static string? ResolveExistingPath(string path, string sourceRoot)
+    {
+        if (File.Exists(path) || Directory.Exists(path))
+            return path;
+
+        var relativePath = Path.GetRelativePath(sourceRoot, path);
+        if (relativePath.StartsWith(".." + Path.DirectorySeparatorChar, StringComparison.Ordinal)
+            || relativePath.Equals("..", StringComparison.Ordinal))
+            return null;
+
+        var current = sourceRoot;
+        foreach (var segment in relativePath.Split(
+                     [Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar],
+                     StringSplitOptions.RemoveEmptyEntries))
+        {
+            if (!Directory.Exists(current))
+                return null;
+
+            var matches = Directory.EnumerateFileSystemEntries(current)
+                .Where(entry => FoldName(Path.GetFileName(entry)) == FoldName(segment))
+                .Take(2)
+                .ToArray();
+            if (matches.Length != 1)
+                return null;
+            current = matches[0];
+        }
+        return current;
+    }
+
+    private static string FoldName(string value)
+    {
+        var normalized = value.Normalize(NormalizationForm.FormD);
+        var builder = new StringBuilder(normalized.Length);
+        foreach (var character in normalized)
+        {
+            if (CharUnicodeInfo.GetUnicodeCategory(character) == UnicodeCategory.NonSpacingMark)
+                continue;
+            builder.Append(character switch
+            {
+                'ı' or 'İ' => 'i',
+                _ => char.ToLowerInvariant(character)
+            });
+        }
+        return builder.ToString().Normalize(NormalizationForm.FormC);
+    }
 }
