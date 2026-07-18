@@ -125,17 +125,26 @@ try
     Assert(info.FileName.EndsWith("robocopy.exe", StringComparison.OrdinalIgnoreCase), "Robocopy çalıştırılmalı");
     Assert(info.ArgumentList.Contains("/MT:16"), "Profil thread sayısı uygulanmalı");
     Assert(!info.ArgumentList.Contains("/MIR"), "Tehlikeli aynalama varsayılan olmamalı");
+    Assert(CopyDestinationResolver.Resolve(@"C:\Kaynak\Belgeler", @"D:\Yedek", CopyRootMode.SelectedFolder)
+               == @"D:\Yedek\Belgeler"
+           && CopyDestinationResolver.Resolve(@"C:\Kaynak\Belgeler", @"D:\Yedek", CopyRootMode.ContentsOnly)
+               == @"D:\Yedek",
+        "Seçilen klasör ve yalnız içerik hedefleri doğru çözümlenmeli");
     var lowResourceJob = new CopyJob
     {
         SourcePath = tempSource,
         DestinationPath = tempDestination,
         Profile = CopyProfiles.All[1],
         RequestedPerformanceMode = TransferPerformanceMode.LowResource,
-        ActivePerformanceMode = TransferPerformanceMode.LowResource
+        ActivePerformanceMode = TransferPerformanceMode.LowResource,
+        BandwidthLimitMbps = 25,
+        UseBackupMode = true
     };
     var lowResourceInfo = RobocopyCommandBuilder.Build(lowResourceJob);
     Assert(lowResourceInfo.ArgumentList.Contains("/MT:4")
-           && lowResourceInfo.ArgumentList.Contains("/IPG:25"),
+           && lowResourceInfo.ArgumentList.Contains("/IPG:25")
+           && lowResourceInfo.ArgumentList.Contains("/IORATE:25m")
+           && lowResourceInfo.ArgumentList.Contains("/ZB"),
         "Düşük kaynak modu iş parçacığını ve disk erişim temposunu sınırlamalı");
 
     var settingsStore = new SettingsStore(storeDirectory);
@@ -151,6 +160,11 @@ try
         MinimizeToTrayWhileRunning = false,
         AutoDownloadUpdates = false,
         PerformanceMode = TransferPerformanceMode.LowResource,
+        CopyRootMode = CopyRootMode.SelectedFolder,
+        BandwidthLimitMbps = 40,
+        CompletionAction = CompletionAction.Sleep,
+        StartWithWindows = true,
+        StartMinimizedWithWindows = true,
         Language = "en-US",
         FavoriteLocations = [new("Test", tempSource)],
         RecentSources = [tempSource],
@@ -168,6 +182,10 @@ try
            && loadedSettings.MinimizeToTrayWhileRunning == savedSettings.MinimizeToTrayWhileRunning
            && loadedSettings.AutoDownloadUpdates == savedSettings.AutoDownloadUpdates
            && loadedSettings.PerformanceMode == TransferPerformanceMode.LowResource
+           && loadedSettings.CopyRootMode == CopyRootMode.SelectedFolder
+           && loadedSettings.BandwidthLimitMbps == 40
+           && loadedSettings.CompletionAction == CompletionAction.Sleep
+           && loadedSettings.StartMinimizedWithWindows
            && loadedSettings.Language == "en-US"
            && loadedSettings.FavoriteLocations.SequenceEqual(savedSettings.FavoriteLocations)
            && loadedSettings.RecentSources.SequenceEqual(savedSettings.RecentSources),
@@ -219,6 +237,8 @@ try
     {
         Name = "Gece yedeği",
         TimeOfDay = "02:30",
+        Kind = ScheduleKind.Weekly,
+        DayOfWeek = DayOfWeek.Saturday,
         Job = new CopyJob
         {
             SourcePath = tempSource,
@@ -227,7 +247,7 @@ try
         }
     };
     await scheduleStore.SaveAsync(scheduledTransfer);
-    Assert((await scheduleStore.FindAsync(scheduledTransfer.Id))?.TimeOfDay == "02:30",
+    Assert((await scheduleStore.FindAsync(scheduledTransfer.Id)) is { TimeOfDay: "02:30", Kind: ScheduleKind.Weekly, DayOfWeek: DayOfWeek.Saturday },
         "Zamanlanmış transfer tüm iş seçenekleriyle saklanmalı");
     await scheduleStore.RemoveAsync(scheduledTransfer.Id);
     Assert(await scheduleStore.FindAsync(scheduledTransfer.Id) is null,
@@ -305,6 +325,24 @@ try
            && liveProgress.Any(value => value.BytesPerSecond > 0),
         $"Canlı Robocopy ilerlemesi aktarılan bayt ve hız bilgisi üretmeli: " +
         string.Join(" || ", liveProgress.Select(value => value.Message).Where(message => message.Contains("File")).Take(5)));
+
+    var firstRelative = Path.GetRelativePath(tempSource,
+        Directory.EnumerateFiles(tempSource, "*.txt", SearchOption.AllDirectories).First());
+    var secondRelative = Path.GetRelativePath(tempSource,
+        Directory.EnumerateFiles(tempSource, "*.txt", SearchOption.AllDirectories).Skip(1).First());
+    File.Delete(Path.Combine(tempDestination, firstRelative));
+    await File.WriteAllTextAsync(Path.Combine(tempDestination, secondRelative), "bozuk hedef içeriği");
+    var comparisonService = new CopyComparisonService();
+    var damagedComparison = await comparisonService.CompareAsync(job);
+    Assert(damagedComparison.MissingFiles == 1 && damagedComparison.SizeMismatches == 1,
+        "Karşılaştırma eksik ve bozuk dosyaları ayırt etmeli");
+    var repairJobs = CopyRepairService.CreateRepairJobs(job, damagedComparison.Differences);
+    Assert(repairJobs.Count >= 1 && repairJobs.Sum(value => value.Options.FilePatterns.Count) == 2,
+        "Onarım yalnızca farklı dosyalar için güvenli işler üretmeli");
+    foreach (var repairJob in repairJobs)
+        Assert((await runner.RunAsync(repairJob)).IsSuccessful, "Onarım işi başarıyla tamamlanmalı");
+    Assert(!(await comparisonService.CompareAsync(job)).NeedsRepair,
+        "Onarım sonrasında kaynak ve hedef yeniden eşleşmeli");
 
     var partialSource = tempSource + "-partial";
     var partialDestination = tempDestination + "-partial";

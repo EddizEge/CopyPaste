@@ -6,7 +6,7 @@ namespace CopyPaste.App.Services;
 
 public sealed class TaskSchedulerService
 {
-    public async Task RegisterDailyAsync(ScheduledTransfer schedule, CancellationToken cancellationToken = default)
+    public async Task RegisterAsync(ScheduledTransfer schedule, CancellationToken cancellationToken = default)
     {
         var executable = Environment.ProcessPath
             ?? throw new InvalidOperationException("Uygulama yolu belirlenemedi.");
@@ -19,16 +19,40 @@ public sealed class TaskSchedulerService
 
     public static IReadOnlyList<string> BuildCreateArguments(ScheduledTransfer schedule, string executablePath)
     {
+        var arguments = new List<string>
+        {
+            "/Create", "/TN", TaskName(schedule.Id),
+            "/TR", $"\"{executablePath}\" --schedule {schedule.Id:D}",
+            "/RL", "LIMITED", "/F"
+        };
+
+        if (schedule.Kind == ScheduleKind.WhenIdle)
+        {
+            arguments.InsertRange(1,
+                ["/SC", "ONIDLE", "/I", Math.Clamp(schedule.IdleMinutes, 1, 999).ToString(CultureInfo.InvariantCulture)]);
+            return arguments;
+        }
+
         if (!TimeOnly.TryParseExact(schedule.TimeOfDay, "HH:mm", CultureInfo.InvariantCulture,
                 DateTimeStyles.None, out var time))
             throw new ArgumentException("Zamanlama saati HH:mm biçiminde olmalıdır.", nameof(schedule));
-        return
-        [
-            "/Create", "/SC", "DAILY", "/TN", TaskName(schedule.Id),
-            "/TR", $"\"{executablePath}\" --schedule {schedule.Id:D}",
-            "/ST", time.ToString("HH:mm", CultureInfo.InvariantCulture),
-            "/RL", "LIMITED", "/F"
-        ];
+
+        string[] trigger = schedule.Kind switch
+        {
+            ScheduleKind.Weekly => new[]
+            {
+                "/SC", "WEEKLY", "/D", schedule.DayOfWeek.ToString()[..3].ToUpperInvariant()
+            },
+            ScheduleKind.Once => new[]
+            {
+                "/SC", "ONCE", "/SD", (schedule.RunDate ?? DateOnly.FromDateTime(DateTime.Today))
+                    .ToString("MM/dd/yyyy", CultureInfo.InvariantCulture)
+            },
+            _ => ["/SC", "DAILY"]
+        };
+        arguments.InsertRange(1, trigger);
+        arguments.InsertRange(arguments.IndexOf("/RL"), ["/ST", time.ToString("HH:mm", CultureInfo.InvariantCulture)]);
+        return arguments;
     }
 
     private static string TaskName(Guid id) => $@"CopyPaste\{id:D}";

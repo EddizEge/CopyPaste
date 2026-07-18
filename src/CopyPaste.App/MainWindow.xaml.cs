@@ -21,6 +21,7 @@ public sealed partial class MainWindow : Window
     private readonly RobocopyRunner _runner = new();
     private readonly CopyPreflightAnalyzer _preflightAnalyzer = new();
     private readonly CopyVerificationService _verificationService = new();
+    private readonly CopyComparisonService _comparisonService = new();
     private readonly HistoryStore _historyStore = new();
     private readonly SettingsStore _settingsStore = new();
     private readonly JobLogStore _jobLogStore = new();
@@ -52,6 +53,7 @@ public sealed partial class MainWindow : Window
     private bool _closeConfirmed;
     private bool _closeDialogOpen;
     private bool _settingsDialogOpen;
+    private bool _useBackupModeForSource;
     private bool _rootLoaded;
     private CopyJob? _lastResultJob;
     private readonly CopyJob? _startupJob;
@@ -112,6 +114,7 @@ public sealed partial class MainWindow : Window
             ValidationText.Text = T("Önceki oturum beklenmedik şekilde kapandı. Ayarlar içinden tanılama paketi oluşturabilirsiniz.",
                 "The previous session closed unexpectedly. You can create a diagnostics package from Settings.");
             ValidationInfoBar.Visibility = Visibility.Visible;
+            _diagnosticsService.AcknowledgeCrashReport();
         }
         if (_startupJob is not null)
             LoadJobIntoForm(_startupJob);
@@ -120,8 +123,7 @@ public sealed partial class MainWindow : Window
             foreach (var sourcePath in _startupSourcePaths)
             {
                 SourceTextBox.Text = sourcePath;
-                var folderName = Path.GetFileName(Path.TrimEndingDirectorySeparator(sourcePath));
-                DestinationTextBox.Text = Path.Combine(_startupDestinationPath, folderName);
+                DestinationTextBox.Text = _startupDestinationPath;
                 await AddCurrentTransferToQueueAsync();
             }
             await RunQueueAsync();
@@ -159,7 +161,7 @@ public sealed partial class MainWindow : Window
         try
         {
             var currentVersion = Assembly.GetExecutingAssembly().GetName().Version
-                ?? new Version(1, 4, 0, 0);
+                ?? new Version(1, 5, 0, 0);
             var result = await _updateService.CheckAsync(currentVersion);
             switch (result.Status)
             {
@@ -286,9 +288,24 @@ public sealed partial class MainWindow : Window
             return;
 
         if ((sender as FrameworkElement)?.Tag?.ToString() == "Source")
+        {
             SourceTextBox.Text = folder.Path;
+            _useBackupModeForSource = false;
+        }
         else
             DestinationTextBox.Text = folder.Path;
+    }
+
+    private async void ProtectedSourceButton_Click(object sender, RoutedEventArgs e)
+    {
+        var path = await ProtectedFolderPickerService.PickAsync();
+        if (string.IsNullOrWhiteSpace(path))
+            return;
+        SourceTextBox.Text = path;
+        _useBackupModeForSource = true;
+        PreflightText.Text = T("Korumalı kaynak seçildi. Sahiplik ve klasör izinleri değiştirilmedi.",
+            "Protected source selected. Ownership and folder permissions were not changed.");
+        PreflightInfoBar.Visibility = Visibility.Visible;
     }
 
     private void ProfileComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -306,11 +323,158 @@ public sealed partial class MainWindow : Window
         await AddCurrentTransferToQueueAsync();
     }
 
+    private async void CompareButton_Click(object sender, RoutedEventArgs e)
+    {
+        ValidationInfoBar.Visibility = Visibility.Collapsed;
+        var draft = CreateDraftJob();
+        if (draft is null)
+            return;
+
+        CompareButton.IsEnabled = false;
+        CompareButton.Content = T("Karşılaştırılıyor…", "Comparing…");
+        try
+        {
+            var progress = new Progress<CopyVerificationProgress>(value =>
+                PreflightText.Text = T($"Karşılaştırılıyor: {value.CheckedFiles:N0} dosya",
+                    $"Comparing: {value.CheckedFiles:N0} files"));
+            PreflightInfoBar.Visibility = Visibility.Visible;
+            var comparison = await _comparisonService.CompareAsync(draft, progress);
+            var lines = comparison.Differences.Take(500)
+                .Select(item => $"{item.RelativePath}\n{item.Detail}")
+                .ToList();
+            if (lines.Count == 0)
+                lines.Add(T("Kaynak ve hedef eşleşiyor; onarım gerekmiyor.",
+                    "Source and destination match; no repair is needed."));
+            var list = new ListView
+            {
+                ItemsSource = lines,
+                MinWidth = 680,
+                MaxHeight = 390,
+                SelectionMode = ListViewSelectionMode.None
+            };
+            var summary = new TextBlock
+            {
+                Text = T(
+                    $"{comparison.CheckedFiles:N0} kontrol • {comparison.IdenticalFiles:N0} aynı • " +
+                    $"{comparison.MissingFiles:N0} eksik • {comparison.SizeMismatches:N0} boyut farkı • " +
+                    $"{comparison.HashMismatches:N0} hash farkı • {comparison.ReadErrors:N0} okuma hatası",
+                    $"{comparison.CheckedFiles:N0} checked • {comparison.IdenticalFiles:N0} identical • " +
+                    $"{comparison.MissingFiles:N0} missing • {comparison.SizeMismatches:N0} size mismatches • " +
+                    $"{comparison.HashMismatches:N0} hash mismatches • {comparison.ReadErrors:N0} read errors"),
+                TextWrapping = TextWrapping.Wrap
+            };
+            var panel = new StackPanel { Spacing = 12 };
+            panel.Children.Add(summary);
+            panel.Children.Add(list);
+            var dialog = new ContentDialog
+            {
+                XamlRoot = Content.XamlRoot,
+                Title = T("Kuru çalışma ve karşılaştırma", "Dry run and comparison"),
+                Content = panel,
+                PrimaryButtonText = T("Eksik ve bozukları onar", "Repair missing and damaged files"),
+                CloseButtonText = T("Kapat", "Close"),
+                IsPrimaryButtonEnabled = comparison.NeedsRepair
+            };
+            if (await dialog.ShowAsync() != ContentDialogResult.Primary)
+                return;
+            var repairJobs = CopyRepairService.CreateRepairJobs(draft, comparison.Differences);
+            foreach (var repairJob in repairJobs)
+            {
+                var preflight = await _preflightAnalyzer.AnalyzeAsync(
+                    repairJob.SourcePath, repairJob.DestinationPath, repairJob.Options);
+                repairJob.EstimatedFileCount = preflight.FileCount;
+                repairJob.EstimatedTotalBytes = preflight.TotalBytes;
+                _queue.Add(new QueueItemViewModel(repairJob, preflight, LocalizationService.IsEnglish(_language)));
+            }
+            await SaveQueueStateAsync();
+            UpdateQueueState();
+            PreflightText.Text = T($"{repairJobs.Count:N0} onarım işi kuyruğa eklendi.",
+                $"{repairJobs.Count:N0} repair jobs were added to the queue.");
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            ValidationText.Text = T("Karşılaştırma tamamlanamadı: ", "Comparison could not be completed: ") + ex.Message;
+            ValidationInfoBar.Visibility = Visibility.Visible;
+        }
+        finally
+        {
+            CompareButton.IsEnabled = !_isQueueRunning;
+            CompareButton.Content = T("Önizle / karşılaştır", "Preview / compare");
+        }
+    }
+
+    private CopyJob? CreateDraftJob()
+    {
+        if (ProfileComboBox.SelectedItem is not CopyProfile profile
+            || ExistingFileBehaviorComboBox.SelectedItem is not OptionChoice<ExistingFileBehavior> existingChoice
+            || VerificationModeComboBox.SelectedItem is not OptionChoice<VerificationMode> verificationChoice)
+            return null;
+        var options = CopyJobOptionsParser.Parse(existingChoice.Value, verificationChoice.Value,
+            FilePatternsTextBox.Text, ExcludedDirectoriesTextBox.Text);
+        if (!options.IsValid)
+        {
+            ValidationText.Text = options.Error;
+            ValidationInfoBar.Visibility = Visibility.Visible;
+            return null;
+        }
+        try
+        {
+            var source = Path.GetFullPath(SourceTextBox.Text.Trim());
+            var destinationRoot = Path.GetFullPath(DestinationTextBox.Text.Trim());
+            var rootMode = (CopyRootModeComboBox.SelectedItem as OptionChoice<CopyRootMode>)?.Value
+                ?? CopyRootMode.SelectedFolder;
+            var destination = CopyDestinationResolver.Resolve(source, destinationRoot, rootMode);
+            var validation = CopyJobValidator.Validate(source, destination);
+            if (!validation.IsValid)
+            {
+                ValidationText.Text = validation.Error;
+                ValidationInfoBar.Visibility = Visibility.Visible;
+                return null;
+            }
+            return new CopyJob
+            {
+                SourcePath = source,
+                DestinationPath = destination,
+                DestinationRootPath = destinationRoot,
+                RootMode = rootMode,
+                Profile = profile,
+                RequestedPerformanceMode = _settings.PerformanceMode,
+                BandwidthLimitMbps = _settings.BandwidthLimitMbps,
+                UseBackupMode = _useBackupModeForSource,
+                Options = options.Options!
+            };
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            ValidationText.Text = ex.Message;
+            ValidationInfoBar.Visibility = Visibility.Visible;
+            return null;
+        }
+    }
+
     private async Task<bool> AddCurrentTransferToQueueAsync()
     {
         ValidationInfoBar.Visibility = Visibility.Collapsed;
         PreflightInfoBar.Visibility = Visibility.Collapsed;
-        var validation = CopyJobValidator.Validate(SourceTextBox.Text, DestinationTextBox.Text);
+        var rootMode = (CopyRootModeComboBox.SelectedItem as OptionChoice<CopyRootMode>)?.Value
+            ?? CopyRootMode.SelectedFolder;
+        string sourcePath;
+        string destinationRootPath;
+        string destinationPath;
+        try
+        {
+            sourcePath = Path.GetFullPath(SourceTextBox.Text.Trim());
+            destinationRootPath = Path.GetFullPath(DestinationTextBox.Text.Trim());
+            destinationPath = CopyDestinationResolver.Resolve(sourcePath, destinationRootPath, rootMode);
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            ValidationText.Text = ex.Message;
+            ValidationInfoBar.Visibility = Visibility.Visible;
+            return false;
+        }
+        var validation = CopyJobValidator.Validate(sourcePath, destinationPath);
         if (!validation.IsValid)
         {
             ValidationText.Text = validation.Error;
@@ -339,10 +503,14 @@ public sealed partial class MainWindow : Window
 
         var job = new CopyJob
         {
-            SourcePath = Path.GetFullPath(SourceTextBox.Text.Trim()),
-            DestinationPath = Path.GetFullPath(DestinationTextBox.Text.Trim()),
+            SourcePath = sourcePath,
+            DestinationPath = destinationPath,
+            DestinationRootPath = destinationRootPath,
+            RootMode = rootMode,
             Profile = profile,
             RequestedPerformanceMode = _settings.PerformanceMode,
+            BandwidthLimitMbps = _settings.BandwidthLimitMbps,
+            UseBackupMode = _useBackupModeForSource,
             Options = optionsResult.Options!
         };
 
@@ -350,7 +518,7 @@ public sealed partial class MainWindow : Window
         _settings = _settings with
         {
             RecentSources = RememberPath(_settings.RecentSources, job.SourcePath),
-            RecentDestinations = RememberPath(_settings.RecentDestinations, job.DestinationPath)
+            RecentDestinations = RememberPath(_settings.RecentDestinations, job.DestinationRootPath ?? job.DestinationPath)
         };
         await _settingsStore.SaveAsync(_settings);
 
@@ -410,6 +578,7 @@ public sealed partial class MainWindow : Window
         if (pendingItems.Count == 0)
             return;
 
+        using var sleepGuard = PowerManagementService.PreventSleep();
         _isQueueRunning = true;
         _pauseRequested = false;
         SetRunningState(true);
@@ -539,6 +708,17 @@ public sealed partial class MainWindow : Window
         _copyCancellation?.Dispose();
         _copyCancellation = null;
         await SaveQueueStateAsync();
+        sleepGuard.Dispose();
+        if (!_pauseRequested && partialCount == 0 && failedCount == 0
+            && _settings.CompletionAction != CompletionAction.None)
+        {
+            try { PowerManagementService.Execute(_settings.CompletionAction); }
+            catch (InvalidOperationException ex)
+            {
+                ValidationText.Text = ex.Message;
+                ValidationInfoBar.Visibility = Visibility.Visible;
+            }
+        }
     }
 
     private void UpdateProgress(RobocopyProgress progress)
@@ -679,6 +859,37 @@ public sealed partial class MainWindow : Window
     }
 
     public void RestoreFromTray() => _trayIcon.Restore();
+
+    public async Task HandleShellRequestAsync(ShellLaunchRequest request)
+    {
+        RestoreFromTray();
+        if (request.ScheduledJob is not null)
+            LoadJobIntoForm(request.ScheduledJob);
+        else
+        {
+            if (!string.IsNullOrWhiteSpace(request.SourcePath))
+                SourceTextBox.Text = request.SourcePath;
+            if (!string.IsNullOrWhiteSpace(request.DestinationPath))
+                DestinationTextBox.Text = request.DestinationPath;
+        }
+        if (!request.AutoStart)
+            return;
+        if (request.SourcePaths is { Count: > 1 } sources
+            && !string.IsNullOrWhiteSpace(request.DestinationPath))
+        {
+            foreach (var source in sources)
+            {
+                SourceTextBox.Text = source;
+                DestinationTextBox.Text = request.DestinationPath;
+                await AddCurrentTransferToQueueAsync();
+            }
+        }
+        else
+        {
+            await AddCurrentTransferToQueueAsync();
+        }
+        await RunQueueAsync();
+    }
 
     private void AppWindow_Closing(AppWindow sender, AppWindowClosingEventArgs args)
     {
@@ -848,9 +1059,64 @@ public sealed partial class MainWindow : Window
         };
         var timePicker = new TimePicker
         {
-            Header = T("Her gün çalışacağı saat", "Run every day at"),
+            Header = T("Çalışma saati", "Run at"),
             Time = new TimeSpan(2, 0, 0),
             ClockIdentifier = "24HourClock"
+        };
+        var frequency = new ComboBox
+        {
+            Header = T("Zamanlama türü", "Schedule type"),
+            DisplayMemberPath = "Label",
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            ItemsSource = new[]
+            {
+                new OptionChoice<ScheduleKind>(ScheduleKind.Daily, T("Her gün", "Daily")),
+                new OptionChoice<ScheduleKind>(ScheduleKind.Weekly, T("Her hafta", "Weekly")),
+                new OptionChoice<ScheduleKind>(ScheduleKind.Once, T("Tek sefer", "Once")),
+                new OptionChoice<ScheduleKind>(ScheduleKind.WhenIdle, T("Bilgisayar boşta olduğunda", "When the computer is idle"))
+            },
+            SelectedIndex = 0
+        };
+        var dayOfWeek = new ComboBox
+        {
+            Header = T("Haftanın günü", "Day of week"),
+            DisplayMemberPath = "Label",
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            ItemsSource = Enum.GetValues<DayOfWeek>().Select(day => new OptionChoice<DayOfWeek>(day,
+                T(day switch
+                {
+                    DayOfWeek.Monday => "Pazartesi", DayOfWeek.Tuesday => "Salı", DayOfWeek.Wednesday => "Çarşamba",
+                    DayOfWeek.Thursday => "Perşembe", DayOfWeek.Friday => "Cuma", DayOfWeek.Saturday => "Cumartesi",
+                    _ => "Pazar"
+                }, day.ToString()))).ToArray(),
+            SelectedIndex = 1,
+            Visibility = Visibility.Collapsed
+        };
+        var runDate = new CalendarDatePicker
+        {
+            Header = T("Çalışma tarihi", "Run date"),
+            Date = DateTimeOffset.Now.AddDays(1),
+            MinDate = DateTimeOffset.Now.Date,
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            Visibility = Visibility.Collapsed
+        };
+        var idleMinutes = new NumberBox
+        {
+            Header = T("Boşta kalma süresi (dakika)", "Idle time (minutes)"),
+            Minimum = 1,
+            Maximum = 999,
+            Value = 10,
+            SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Compact,
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            Visibility = Visibility.Collapsed
+        };
+        frequency.SelectionChanged += (_, _) =>
+        {
+            var kind = (frequency.SelectedItem as OptionChoice<ScheduleKind>)?.Value ?? ScheduleKind.Daily;
+            dayOfWeek.Visibility = kind == ScheduleKind.Weekly ? Visibility.Visible : Visibility.Collapsed;
+            runDate.Visibility = kind == ScheduleKind.Once ? Visibility.Visible : Visibility.Collapsed;
+            idleMinutes.Visibility = kind == ScheduleKind.WhenIdle ? Visibility.Visible : Visibility.Collapsed;
+            timePicker.Visibility = kind == ScheduleKind.WhenIdle ? Visibility.Collapsed : Visibility.Visible;
         };
         var panel = new StackPanel { Spacing = 10 };
         if (choices.Count > 0)
@@ -863,12 +1129,16 @@ public sealed partial class MainWindow : Window
             panel.Children.Add(list);
         }
         panel.Children.Add(nameBox);
+        panel.Children.Add(frequency);
+        panel.Children.Add(dayOfWeek);
+        panel.Children.Add(runDate);
+        panel.Children.Add(idleMinutes);
         panel.Children.Add(timePicker);
         var dialog = new ContentDialog
         {
             Title = T("Zamanlanmış transferler", "Scheduled transfers"),
-            Content = panel,
-            PrimaryButtonText = T("Günlük görev oluştur", "Create daily task"),
+            Content = new ScrollViewer { Content = panel, MaxHeight = 590, VerticalScrollBarVisibility = ScrollBarVisibility.Auto },
+            PrimaryButtonText = T("Görev oluştur", "Create task"),
             SecondaryButtonText = choices.Count > 0 ? T("Seçili görevi kaldır", "Remove selected task") : string.Empty,
             CloseButtonText = T("Kapat", "Close"),
             XamlRoot = Content.XamlRoot
@@ -907,23 +1177,35 @@ public sealed partial class MainWindow : Window
 
         var schedule = new ScheduledTransfer
         {
-            Name = string.IsNullOrWhiteSpace(nameBox.Text) ? T("Günlük transfer", "Daily transfer") : nameBox.Text.Trim(),
+            Name = string.IsNullOrWhiteSpace(nameBox.Text) ? T("CopyPaste transferi", "CopyPaste transfer") : nameBox.Text.Trim(),
             TimeOfDay = timePicker.Time.ToString(@"hh\:mm"),
+            Kind = (frequency.SelectedItem as OptionChoice<ScheduleKind>)?.Value ?? ScheduleKind.Daily,
+            DayOfWeek = (dayOfWeek.SelectedItem as OptionChoice<DayOfWeek>)?.Value ?? DayOfWeek.Monday,
+            RunDate = runDate.Date is { } selectedDate ? DateOnly.FromDateTime(selectedDate.DateTime) : null,
+            IdleMinutes = double.IsNaN(idleMinutes.Value) ? 10 : (int)Math.Clamp(idleMinutes.Value, 1, 999),
             Job = new CopyJob
             {
                 SourcePath = Path.GetFullPath(SourceTextBox.Text.Trim()),
-                DestinationPath = Path.GetFullPath(DestinationTextBox.Text.Trim()),
+                DestinationPath = CopyDestinationResolver.Resolve(
+                    SourceTextBox.Text, DestinationTextBox.Text,
+                    (CopyRootModeComboBox.SelectedItem as OptionChoice<CopyRootMode>)?.Value
+                        ?? CopyRootMode.SelectedFolder),
+                DestinationRootPath = Path.GetFullPath(DestinationTextBox.Text.Trim()),
+                RootMode = (CopyRootModeComboBox.SelectedItem as OptionChoice<CopyRootMode>)?.Value
+                    ?? CopyRootMode.SelectedFolder,
                 Profile = profile,
                 RequestedPerformanceMode = _settings.PerformanceMode,
+                BandwidthLimitMbps = _settings.BandwidthLimitMbps,
+                UseBackupMode = _useBackupModeForSource,
                 Options = options.Options!
             }
         };
         try
         {
-            await _taskScheduler.RegisterDailyAsync(schedule);
+            await _taskScheduler.RegisterAsync(schedule);
             await _scheduleStore.SaveAsync(schedule);
-            PreflightText.Text = T($"{schedule.Name} her gün {schedule.TimeOfDay} için zamanlandı.",
-                $"{schedule.Name} scheduled every day at {schedule.TimeOfDay}.");
+            PreflightText.Text = T($"{schedule.Name} Windows Görev Zamanlayıcı'ya kaydedildi.",
+                $"{schedule.Name} was registered with Windows Task Scheduler.");
             PreflightInfoBar.Visibility = Visibility.Visible;
         }
         catch (Exception ex) when (ex is InvalidOperationException or IOException or UnauthorizedAccessException)
@@ -1002,6 +1284,37 @@ public sealed partial class MainWindow : Window
                 Header = T("Windows açıldığında CopyPaste'i başlat", "Start CopyPaste when Windows starts"),
                 IsOn = _settings.StartWithWindows
             };
+            var startMinimized = new ToggleSwitch
+            {
+                Header = T("Windows başlangıcında tepside aç", "Start in the system tray with Windows"),
+                IsOn = _settings.StartMinimizedWithWindows,
+                IsEnabled = _settings.StartWithWindows
+            };
+            startWithWindows.Toggled += (_, _) => startMinimized.IsEnabled = startWithWindows.IsOn;
+            var bandwidthLimit = new NumberBox
+            {
+                Header = T("Hız sınırı (MB/sn, 0 = sınırsız)", "Speed limit (MB/s, 0 = unlimited)"),
+                Minimum = 0,
+                Maximum = 10240,
+                Value = _settings.BandwidthLimitMbps,
+                SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Compact,
+                HorizontalAlignment = HorizontalAlignment.Stretch
+            };
+            var completionAction = new ComboBox
+            {
+                Header = T("Kuyruk tamamlandığında", "When the queue finishes"),
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+                DisplayMemberPath = "Label",
+                ItemsSource = new[]
+                {
+                    new OptionChoice<CompletionAction>(CompletionAction.None, T("Bir şey yapma", "Do nothing")),
+                    new OptionChoice<CompletionAction>(CompletionAction.Sleep, T("Bilgisayarı uyut", "Put the computer to sleep")),
+                    new OptionChoice<CompletionAction>(CompletionAction.ShutDown, T("Bilgisayarı kapat", "Shut down the computer"))
+                }
+            };
+            completionAction.SelectedItem = completionAction.Items.Cast<object>()
+                .OfType<OptionChoice<CompletionAction>>()
+                .First(choice => choice.Value == _settings.CompletionAction);
             var panel = new StackPanel { Spacing = 14, MinWidth = 430 };
             panel.Children.Add(language);
             panel.Children.Add(performance);
@@ -1010,6 +1323,9 @@ public sealed partial class MainWindow : Window
             panel.Children.Add(autoUpdates);
             panel.Children.Add(checkUpdatesOnStartup);
             panel.Children.Add(startWithWindows);
+            panel.Children.Add(startMinimized);
+            panel.Children.Add(bandwidthLimit);
+            panel.Children.Add(completionAction);
 
             UpdateIntegrationState();
             var integrationTitle = new TextBlock
@@ -1079,11 +1395,17 @@ public sealed partial class MainWindow : Window
                 MinimizeToTrayWhileRunning = minimizeOnClose.IsOn,
                 AutoDownloadUpdates = autoUpdates.IsOn,
                 CheckForUpdatesOnStartup = checkUpdatesOnStartup.IsOn,
-                StartWithWindows = startWithWindows.IsOn
+                StartWithWindows = startWithWindows.IsOn,
+                StartMinimizedWithWindows = startWithWindows.IsOn && startMinimized.IsOn,
+                BandwidthLimitMbps = double.IsNaN(bandwidthLimit.Value)
+                    ? 0
+                    : (int)Math.Clamp(bandwidthLimit.Value, 0, 10240),
+                CompletionAction = (completionAction.SelectedItem as OptionChoice<CompletionAction>)?.Value
+                    ?? CompletionAction.None
             };
             ApplySettingsToUi(_settings);
             await _settingsStore.SaveAsync(_settings);
-            ApplyStartWithWindowsSetting(_settings.StartWithWindows);
+            ApplyStartWithWindowsSetting(_settings.StartWithWindows, _settings.StartMinimizedWithWindows);
             ApplyLanguage(_settings.Language);
             PreflightText.Text = T("Çalışma ayarları kaydedildi.", "Application settings saved.");
             PreflightInfoBar.Visibility = Visibility.Visible;
@@ -1123,6 +1445,8 @@ public sealed partial class MainWindow : Window
             ?? ExistingFileBehavior.Update,
         Verification = (VerificationModeComboBox.SelectedItem as OptionChoice<VerificationMode>)?.Value
             ?? VerificationMode.Size,
+        CopyRootMode = (CopyRootModeComboBox.SelectedItem as OptionChoice<CopyRootMode>)?.Value
+            ?? CopyRootMode.SelectedFolder,
         FilePatterns = FilePatternsTextBox.Text,
         ExcludedDirectories = ExcludedDirectoriesTextBox.Text,
         ContinueQueueOnError = ContinueOnErrorToggle.IsOn,
@@ -1131,7 +1455,10 @@ public sealed partial class MainWindow : Window
         AutoDownloadUpdates = _settings.AutoDownloadUpdates,
         CheckForUpdatesOnStartup = _settings.CheckForUpdatesOnStartup,
         StartWithWindows = _settings.StartWithWindows,
+        StartMinimizedWithWindows = _settings.StartMinimizedWithWindows,
         PerformanceMode = _settings.PerformanceMode,
+        BandwidthLimitMbps = _settings.BandwidthLimitMbps,
+        CompletionAction = _settings.CompletionAction,
         WaitForNetwork = WaitForNetworkToggle.IsOn,
         NetworkRetryMinutes = double.IsNaN(NetworkRetryMinutesBox.Value)
             ? 15
@@ -1149,6 +1476,7 @@ public sealed partial class MainWindow : Window
             ?? _profiles[0];
         SelectChoice(ExistingFileBehaviorComboBox, settings.ExistingFiles);
         SelectChoice(VerificationModeComboBox, settings.Verification);
+        SelectChoice(CopyRootModeComboBox, settings.CopyRootMode);
         FilePatternsTextBox.Text = string.IsNullOrWhiteSpace(settings.FilePatterns) ? "*" : settings.FilePatterns;
         ExcludedDirectoriesTextBox.Text = settings.ExcludedDirectories;
         ContinueOnErrorToggle.IsOn = settings.ContinueQueueOnError;
@@ -1208,14 +1536,25 @@ public sealed partial class MainWindow : Window
         };
         SelectChoice(VerificationModeComboBox, verification);
 
+        var rootMode = (CopyRootModeComboBox.SelectedItem as OptionChoice<CopyRootMode>)?.Value
+            ?? _settings.CopyRootMode;
+        CopyRootModeComboBox.ItemsSource = new[]
+        {
+            new OptionChoice<CopyRootMode>(CopyRootMode.SelectedFolder,
+                T("Seçilen klasörü kopyala (önerilen)", "Copy the selected folder (recommended)")),
+            new OptionChoice<CopyRootMode>(CopyRootMode.ContentsOnly,
+                T("Yalnızca klasörün içeriğini kopyala", "Copy only the folder contents"))
+        };
+        SelectChoice(CopyRootModeComboBox, rootMode);
+
     }
 
-    private static void ApplyStartWithWindowsSetting(bool enabled)
+    private static void ApplyStartWithWindowsSetting(bool enabled, bool minimized)
     {
         using var key = Registry.CurrentUser.CreateSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run");
         const string valueName = "CopyPaste";
         if (enabled)
-            key.SetValue(valueName, $"\"{Environment.ProcessPath}\"");
+            key.SetValue(valueName, $"\"{Environment.ProcessPath}\"{(minimized ? " --minimized" : string.Empty)}");
         else
             key.DeleteValue(valueName, throwOnMissingValue: false);
     }
@@ -1226,6 +1565,8 @@ public sealed partial class MainWindow : Window
         TransferPerformanceMode.LowResource => T("Düşük kaynak", "Low resource"),
         _ => T("Dengeli", "Balanced")
     };
+
+    public bool MinimizeToTray() => _trayIcon.HideToTray();
 
     private IEnumerable<CopyProfile> GetBuiltInProfiles() => LocalizationService.IsEnglish(_language)
         ?
@@ -1412,11 +1753,13 @@ public sealed partial class MainWindow : Window
     private void LoadJobIntoForm(CopyJob job)
     {
         SourceTextBox.Text = job.SourcePath;
-        DestinationTextBox.Text = job.DestinationPath;
+        _useBackupModeForSource = job.UseBackupMode;
+        DestinationTextBox.Text = job.DestinationRootPath ?? job.DestinationPath;
         ProfileComboBox.SelectedItem = _profiles.FirstOrDefault(profile => profile.Id == job.Profile.Id)
             ?? _profiles[0];
         SelectChoice(ExistingFileBehaviorComboBox, job.Options.ExistingFiles);
         SelectChoice(VerificationModeComboBox, job.Options.Verification);
+        SelectChoice(CopyRootModeComboBox, job.RootMode);
         FilePatternsTextBox.Text = string.Join(';', job.Options.FilePatterns);
         ExcludedDirectoriesTextBox.Text = string.Join(';', job.Options.ExcludedDirectories);
         PreflightText.Text = T("Geçmişteki transfer forma yüklendi; kontrol edip kuyruğa ekleyebilirsiniz.",
@@ -1442,9 +1785,11 @@ public sealed partial class MainWindow : Window
         ProfileComboBox.IsEnabled = !running;
         ExistingFileBehaviorComboBox.IsEnabled = !running;
         VerificationModeComboBox.IsEnabled = !running;
+        CopyRootModeComboBox.IsEnabled = !running;
         FilePatternsTextBox.IsEnabled = !running;
         ExcludedDirectoriesTextBox.IsEnabled = !running;
         StartButton.IsEnabled = !running;
+        CompareButton.IsEnabled = !running;
         StartQueueButton.IsEnabled = !running;
         ClearQueueButton.IsEnabled = !running;
         CancelButton.IsEnabled = running;

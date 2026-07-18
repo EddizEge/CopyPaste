@@ -10,6 +10,19 @@ public enum TransferPerformanceMode
     LowResource
 }
 
+public enum CopyRootMode
+{
+    SelectedFolder,
+    ContentsOnly
+}
+
+public enum CompletionAction
+{
+    None,
+    Sleep,
+    ShutDown
+}
+
 public sealed record AppSettings
 {
     public string DefaultProfileId { get; init; } = "balanced";
@@ -23,7 +36,11 @@ public sealed record AppSettings
     public bool AutoDownloadUpdates { get; init; } = true;
     public bool CheckForUpdatesOnStartup { get; init; } = true;
     public bool StartWithWindows { get; init; }
+    public bool StartMinimizedWithWindows { get; init; }
     public TransferPerformanceMode PerformanceMode { get; init; } = TransferPerformanceMode.Automatic;
+    public CopyRootMode CopyRootMode { get; init; } = CopyRootMode.SelectedFolder;
+    public int BandwidthLimitMbps { get; init; }
+    public CompletionAction CompletionAction { get; init; }
     public string Language { get; init; } = "tr-TR";
     public IReadOnlyList<FavoriteLocation> FavoriteLocations { get; init; } = [];
     public IReadOnlyList<string> RecentSources { get; init; } = [];
