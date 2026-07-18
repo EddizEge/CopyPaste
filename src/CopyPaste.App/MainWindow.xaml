@@ -92,7 +92,7 @@
                                     <Button Grid.Column="2" Content="▾" Tag="Source" Click="SavedLocationsButton_Click"
                                             Width="34" Height="34" Margin="0,4" Background="Transparent"
                                             Foreground="#D6D9E2" BorderThickness="0" ToolTipService.ToolTip="Favoriler ve son kullanılanlar" />
-                                    <Button Grid.Column="3" Content="♢" Click="ProtectedSourceButton_Click"
+                                    <Button Grid.Column="3" Content="＋" Click="ProtectedSourceButton_Click"
                                             Width="36" Height="34" Margin="0,4" Background="Transparent"
                                             Foreground="#B9A9FF" BorderThickness="0"
                                             ToolTipService.ToolTip="Korumalı klasörü yönetici olarak seç" />
