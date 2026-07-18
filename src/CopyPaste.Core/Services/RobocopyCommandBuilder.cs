@@ -28,13 +28,22 @@ public static class RobocopyCommandBuilder
         info.ArgumentList.Add("/Z");
         info.ArgumentList.Add("/COPY:DAT");
         info.ArgumentList.Add("/DCOPY:DAT");
-        info.ArgumentList.Add($"/MT:{job.Profile.ThreadCount}");
+        var threadCount = job.ActivePerformanceMode switch
+        {
+            TransferPerformanceMode.FullSpeed => job.Profile.ThreadCount,
+            TransferPerformanceMode.LowResource => Math.Min(job.Profile.ThreadCount, 4),
+            _ => Math.Min(job.Profile.ThreadCount, 16)
+        };
+        info.ArgumentList.Add($"/MT:{Math.Clamp(threadCount, 1, 128)}");
         info.ArgumentList.Add($"/R:{job.Profile.RetryCount}");
         info.ArgumentList.Add($"/W:{job.Profile.RetryWaitSeconds}");
         info.ArgumentList.Add("/BYTES");
         info.ArgumentList.Add("/FP");
         info.ArgumentList.Add("/TEE");
         info.ArgumentList.Add("/XJ");
+
+        if (job.ActivePerformanceMode == TransferPerformanceMode.LowResource)
+            info.ArgumentList.Add("/IPG:25");
 
         if (job.Profile.UseUnbufferedIo)
             info.ArgumentList.Add("/J");

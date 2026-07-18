@@ -24,6 +24,12 @@ public sealed partial class RobocopyRunner
             if (!process.Start())
                 throw new InvalidOperationException("Robocopy işlemi başlatılamadı.");
 
+            if (job.ActivePerformanceMode == TransferPerformanceMode.LowResource)
+            {
+                try { process.PriorityClass = ProcessPriorityClass.BelowNormal; }
+                catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception) { }
+            }
+
             using var registration = cancellationToken.Register(() =>
             {
                 try

@@ -1,5 +1,12 @@
 # Değişiklik günlüğü
 
+## 1.4.0
+
+- Windows sağ tık entegrasyonu, bildirim testi ve tanılama araçları ana ekrandan Ayarlar'a taşındı.
+- Otomatik, tam hız, dengeli ve düşük kaynak performans modları eklendi.
+- Otomatik mod tam ekran uygulamalarda Robocopy yükünü düşürür, bilgisayar boşta olduğunda tam hıza çıkar.
+- Düşük kaynak modunda iş parçacığı, işlem önceliği ve disk erişim temposu sınırlandırılır.
+
 ## 1.3.2
 
 - Transfer seçenekleri ile uygulama tercihleri birbirinden ayrıldı.
