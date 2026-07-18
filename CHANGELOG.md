@@ -1,5 +1,14 @@
 # Değişiklik günlüğü
 
+## 1.5.0
+
+- Seçilen klasörün kendisini veya yalnızca içeriğini kopyalama seçeneği eklendi; varsayılan davranış klasörün kendisini kopyalamaktır.
+- Korumalı harici Windows disklerinde sahiplik/izin değiştirmeden gezinmek için yönetici kaynak seçicisi ve Robocopy `/ZB` desteği eklendi.
+- Kaynak ile hedefi boyut veya SHA-256 ile karşılaştıran kuru çalışma ekranı ve yalnızca eksik/bozuk dosyaları onarma kuyruğu eklendi.
+- Günlük zamanlamaya haftalık, tek seferlik ve bilgisayar boşta olduğunda çalıştırma seçenekleri eklendi.
+- Sayısal hız sınırı, transfer boyunca Windows uykusunu önleme ve tamamlanınca uyutma/kapatma seçenekleri eklendi.
+- Windows başlangıcında tepside açılma ve ikinci çalıştırmaları mevcut pencereye yönlendiren tek örnek davranışı eklendi.
+
 ## 1.4.0
 
 - Windows sağ tık entegrasyonu, bildirim testi ve tanılama araçları ana ekrandan Ayarlar'a taşındı.

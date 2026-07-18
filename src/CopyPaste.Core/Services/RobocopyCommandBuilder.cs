@@ -25,7 +25,7 @@ public static class RobocopyCommandBuilder
         foreach (var pattern in job.Options.FilePatterns)
             info.ArgumentList.Add(pattern);
         info.ArgumentList.Add("/E");
-        info.ArgumentList.Add("/Z");
+        info.ArgumentList.Add(job.UseBackupMode ? "/ZB" : "/Z");
         info.ArgumentList.Add("/COPY:DAT");
         info.ArgumentList.Add("/DCOPY:DAT");
         var threadCount = job.ActivePerformanceMode switch
@@ -44,6 +44,8 @@ public static class RobocopyCommandBuilder
 
         if (job.ActivePerformanceMode == TransferPerformanceMode.LowResource)
             info.ArgumentList.Add("/IPG:25");
+        if (job.BandwidthLimitMbps > 0)
+            info.ArgumentList.Add($"/IORATE:{Math.Clamp(job.BandwidthLimitMbps, 1, 10240)}m");
 
         if (job.Profile.UseUnbufferedIo)
             info.ArgumentList.Add("/J");

@@ -25,7 +25,7 @@
                         <StackPanel Orientation="Horizontal" Spacing="9">
                             <TextBlock Text="CopyPaste" Foreground="White" FontSize="20" FontWeight="SemiBold" />
                             <Border Background="#28233F" CornerRadius="8" Padding="8,2" VerticalAlignment="Center">
-                                <TextBlock Text="1.4" Foreground="#B9B1FF" FontSize="10" FontWeight="SemiBold" />
+                                <TextBlock Text="1.5" Foreground="#B9B1FF" FontSize="10" FontWeight="SemiBold" />
                             </Border>
                         </StackPanel>
                         <TextBlock Text="Robocopy ile hızlı ve doğrulanabilir transfer" Style="{StaticResource MutedTextStyle}" />
@@ -82,6 +82,7 @@
                                         <ColumnDefinition Width="Auto" />
                                         <ColumnDefinition Width="Auto" />
                                         <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="Auto" />
                                     </Grid.ColumnDefinitions>
                                     <TextBox x:Name="SourceTextBox" Style="{StaticResource PathTextBoxStyle}"
                                              PlaceholderText="Kopyalanacak klasör" Padding="12,8" />
@@ -91,7 +92,11 @@
                                     <Button Grid.Column="2" Content="▾" Tag="Source" Click="SavedLocationsButton_Click"
                                             Width="34" Height="34" Margin="0,4" Background="Transparent"
                                             Foreground="#D6D9E2" BorderThickness="0" ToolTipService.ToolTip="Favoriler ve son kullanılanlar" />
-                                    <Button Grid.Column="3" Content="⌕" Tag="Source" Click="BrowseButton_Click"
+                                    <Button Grid.Column="3" Content="♢" Click="ProtectedSourceButton_Click"
+                                            Width="36" Height="34" Margin="0,4" Background="Transparent"
+                                            Foreground="#B9A9FF" BorderThickness="0"
+                                            ToolTipService.ToolTip="Korumalı klasörü yönetici olarak seç" />
+                                    <Button Grid.Column="4" Content="⌕" Tag="Source" Click="BrowseButton_Click"
                                             Width="40" Height="34" Margin="0,4,4,4" Background="Transparent"
                                             Foreground="#D6D9E2" BorderThickness="0" ToolTipService.ToolTip="Kaynak seç" />
                                 </Grid>
@@ -138,10 +143,14 @@
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*" />
                                 <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="Auto" />
                             </Grid.ColumnDefinitions>
                             <TextBlock x:Name="ProfileDescriptionText" Foreground="#8F97A8" FontSize="11"
                                        VerticalAlignment="Center" TextWrapping="Wrap" />
-                            <Button x:Name="StartButton" Grid.Column="1" Content="＋  Kuyruğa ekle"
+                            <Button x:Name="CompareButton" Grid.Column="1" Content="Önizle / karşılaştır"
+                                    Style="{StaticResource QuietButtonStyle}" MinWidth="152" Margin="0,0,8,0"
+                                    Click="CompareButton_Click" />
+                            <Button x:Name="StartButton" Grid.Column="2" Content="＋  Kuyruğa ekle"
                                     Style="{StaticResource PrimaryButtonStyle}" MinWidth="172"
                                     Click="StartButton_Click" />
                         </Grid>
@@ -380,6 +389,11 @@
                                 <StackPanel Spacing="5">
                                     <TextBlock Text="Doğrulama" Foreground="#C7CBD5" FontSize="12" />
                                     <ComboBox x:Name="VerificationModeComboBox" DisplayMemberPath="Label"
+                                              HorizontalAlignment="Stretch" />
+                                </StackPanel>
+                                <StackPanel Spacing="5">
+                                    <TextBlock Text="Klasör kopyalama biçimi" Foreground="#C7CBD5" FontSize="12" />
+                                    <ComboBox x:Name="CopyRootModeComboBox" DisplayMemberPath="Label"
                                               HorizontalAlignment="Stretch" />
                                 </StackPanel>
                                 <Expander Header="Gelişmiş seçenekler" Background="#1B1E25"

@@ -11,6 +11,22 @@ public sealed class DiagnosticsService
 
     public bool HasCrashReport => File.Exists(Path.Combine(_root, "crash.log"));
 
+    public void AcknowledgeCrashReport()
+    {
+        var source = Path.Combine(_root, "crash.log");
+        if (!File.Exists(source))
+            return;
+        try
+        {
+            Directory.CreateDirectory(_root);
+            File.Move(source, Path.Combine(_root, "crash.previous.log"), overwrite: true);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // Tanılama kaydı silinmez; sonraki açılışta yeniden denenir.
+        }
+    }
+
     public async Task<string> CreatePackageAsync(CancellationToken cancellationToken = default)
     {
         var output = Path.Combine(
@@ -27,7 +43,7 @@ public sealed class DiagnosticsService
                              $"Generated: {DateTimeOffset.Now:O}{Environment.NewLine}";
             await File.WriteAllTextAsync(Path.Combine(temporary, "system.txt"), systemInfo,
                 new UTF8Encoding(false), cancellationToken);
-            foreach (var fileName in new[] { "crash.log", "settings.json", "queue.json" })
+            foreach (var fileName in new[] { "crash.log", "crash.previous.log", "settings.json", "queue.json" })
             {
                 var source = Path.Combine(_root, fileName);
                 if (File.Exists(source))

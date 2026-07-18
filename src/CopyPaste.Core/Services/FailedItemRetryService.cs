@@ -82,6 +82,8 @@ public sealed class FailedItemRetryService
                     Profile = originalJob.Profile,
                     RequestedPerformanceMode = originalJob.RequestedPerformanceMode,
                     ActivePerformanceMode = originalJob.ActivePerformanceMode,
+                    BandwidthLimitMbps = originalJob.BandwidthLimitMbps,
+                    UseBackupMode = originalJob.UseBackupMode,
                     Options = originalJob.Options with { FilePatterns = ["*"] }
                 });
                 continue;
@@ -95,6 +97,8 @@ public sealed class FailedItemRetryService
                 Profile = originalJob.Profile,
                 RequestedPerformanceMode = originalJob.RequestedPerformanceMode,
                 ActivePerformanceMode = originalJob.ActivePerformanceMode,
+                BandwidthLimitMbps = originalJob.BandwidthLimitMbps,
+                UseBackupMode = originalJob.UseBackupMode,
                 Options = originalJob.Options with
                 {
                     FilePatterns = [Path.GetFileName(failedPath)],
