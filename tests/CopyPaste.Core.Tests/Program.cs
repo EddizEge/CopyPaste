@@ -125,6 +125,18 @@ try
     Assert(info.FileName.EndsWith("robocopy.exe", StringComparison.OrdinalIgnoreCase), "Robocopy çalıştırılmalı");
     Assert(info.ArgumentList.Contains("/MT:16"), "Profil thread sayısı uygulanmalı");
     Assert(!info.ArgumentList.Contains("/MIR"), "Tehlikeli aynalama varsayılan olmamalı");
+    var lowResourceJob = new CopyJob
+    {
+        SourcePath = tempSource,
+        DestinationPath = tempDestination,
+        Profile = CopyProfiles.All[1],
+        RequestedPerformanceMode = TransferPerformanceMode.LowResource,
+        ActivePerformanceMode = TransferPerformanceMode.LowResource
+    };
+    var lowResourceInfo = RobocopyCommandBuilder.Build(lowResourceJob);
+    Assert(lowResourceInfo.ArgumentList.Contains("/MT:4")
+           && lowResourceInfo.ArgumentList.Contains("/IPG:25"),
+        "Düşük kaynak modu iş parçacığını ve disk erişim temposunu sınırlamalı");
 
     var settingsStore = new SettingsStore(storeDirectory);
     var savedSettings = new AppSettings
@@ -138,6 +150,7 @@ try
         NotificationsEnabled = false,
         MinimizeToTrayWhileRunning = false,
         AutoDownloadUpdates = false,
+        PerformanceMode = TransferPerformanceMode.LowResource,
         Language = "en-US",
         FavoriteLocations = [new("Test", tempSource)],
         RecentSources = [tempSource],
@@ -154,6 +167,7 @@ try
            && loadedSettings.NotificationsEnabled == savedSettings.NotificationsEnabled
            && loadedSettings.MinimizeToTrayWhileRunning == savedSettings.MinimizeToTrayWhileRunning
            && loadedSettings.AutoDownloadUpdates == savedSettings.AutoDownloadUpdates
+           && loadedSettings.PerformanceMode == TransferPerformanceMode.LowResource
            && loadedSettings.Language == "en-US"
            && loadedSettings.FavoriteLocations.SequenceEqual(savedSettings.FavoriteLocations)
            && loadedSettings.RecentSources.SequenceEqual(savedSettings.RecentSources),

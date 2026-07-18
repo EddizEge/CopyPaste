@@ -80,6 +80,8 @@ public sealed class FailedItemRetryService
                     SourcePath = failedPath,
                     DestinationPath = Path.Combine(destinationRoot, relativePath),
                     Profile = originalJob.Profile,
+                    RequestedPerformanceMode = originalJob.RequestedPerformanceMode,
+                    ActivePerformanceMode = originalJob.ActivePerformanceMode,
                     Options = originalJob.Options with { FilePatterns = ["*"] }
                 });
                 continue;
@@ -91,6 +93,8 @@ public sealed class FailedItemRetryService
                 SourcePath = Path.GetDirectoryName(failedPath) ?? sourceRoot,
                 DestinationPath = Path.Combine(destinationRoot, relativeDirectory),
                 Profile = originalJob.Profile,
+                RequestedPerformanceMode = originalJob.RequestedPerformanceMode,
+                ActivePerformanceMode = originalJob.ActivePerformanceMode,
                 Options = originalJob.Options with
                 {
                     FilePatterns = [Path.GetFileName(failedPath)],

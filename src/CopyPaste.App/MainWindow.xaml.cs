@@ -109,8 +109,8 @@ public sealed partial class MainWindow : Window
         await LoadHistoryAsync();
         if (_diagnosticsService.HasCrashReport)
         {
-            ValidationText.Text = T("Önceki oturum beklenmedik şekilde kapandı. Tanılama paketini Windows entegrasyonu bölümünden oluşturabilirsiniz.",
-                "The previous session closed unexpectedly. You can create a diagnostics package from Windows integration.");
+            ValidationText.Text = T("Önceki oturum beklenmedik şekilde kapandı. Ayarlar içinden tanılama paketi oluşturabilirsiniz.",
+                "The previous session closed unexpectedly. You can create a diagnostics package from Settings.");
             ValidationInfoBar.Visibility = Visibility.Visible;
         }
         if (_startupJob is not null)
@@ -159,7 +159,7 @@ public sealed partial class MainWindow : Window
         try
         {
             var currentVersion = Assembly.GetExecutingAssembly().GetName().Version
-                ?? new Version(1, 3, 2, 0);
+                ?? new Version(1, 4, 0, 0);
             var result = await _updateService.CheckAsync(currentVersion);
             switch (result.Status)
             {
@@ -342,6 +342,7 @@ public sealed partial class MainWindow : Window
             SourcePath = Path.GetFullPath(SourceTextBox.Text.Trim()),
             DestinationPath = Path.GetFullPath(DestinationTextBox.Text.Trim()),
             Profile = profile,
+            RequestedPerformanceMode = _settings.PerformanceMode,
             Options = optionsResult.Options!
         };
 
@@ -417,7 +418,9 @@ public sealed partial class MainWindow : Window
         foreach (var item in pendingItems)
         {
             _activeQueueItem = item;
-            StatusText.Text = T($"Kopyalanıyor: {item.Title}", $"Copying: {item.Title}");
+            item.Job.ActivePerformanceMode = SystemActivityService.Resolve(item.Job.RequestedPerformanceMode);
+            StatusText.Text = T($"Kopyalanıyor: {item.Title}", $"Copying: {item.Title}") +
+                              $" • {PerformanceModeLabel(item.Job.ActivePerformanceMode)}";
             CurrentFileText.Text = item.Paths;
             item.SetRunning();
             item.Job.Status = CopyJobStatus.Running;
@@ -911,6 +914,7 @@ public sealed partial class MainWindow : Window
                 SourcePath = Path.GetFullPath(SourceTextBox.Text.Trim()),
                 DestinationPath = Path.GetFullPath(DestinationTextBox.Text.Trim()),
                 Profile = profile,
+                RequestedPerformanceMode = _settings.PerformanceMode,
                 Options = options.Options!
             }
         };
@@ -952,6 +956,27 @@ public sealed partial class MainWindow : Window
                 .OfType<OptionChoice<string>>()
                 .First(choice => choice.Value.Equals(_settings.Language, StringComparison.OrdinalIgnoreCase));
 
+            var performance = new ComboBox
+            {
+                Header = T("Performans modu", "Performance mode"),
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+                DisplayMemberPath = "Label",
+                ItemsSource = new[]
+                {
+                    new OptionChoice<TransferPerformanceMode>(TransferPerformanceMode.Automatic,
+                        T("Otomatik — oyunda sessiz, boşta tam hız", "Automatic — quiet in games, full speed when idle")),
+                    new OptionChoice<TransferPerformanceMode>(TransferPerformanceMode.FullSpeed,
+                        T("Tam hız", "Full speed")),
+                    new OptionChoice<TransferPerformanceMode>(TransferPerformanceMode.Balanced,
+                        T("Dengeli", "Balanced")),
+                    new OptionChoice<TransferPerformanceMode>(TransferPerformanceMode.LowResource,
+                        T("Düşük kaynak", "Low resource"))
+                }
+            };
+            performance.SelectedItem = performance.Items.Cast<object>()
+                .OfType<OptionChoice<TransferPerformanceMode>>()
+                .First(choice => choice.Value == _settings.PerformanceMode);
+
             var notifications = new ToggleSwitch
             {
                 Header = T("Transfer sonunda bildirim göster", "Show a notification when a transfer finishes"),
@@ -979,17 +1004,65 @@ public sealed partial class MainWindow : Window
             };
             var panel = new StackPanel { Spacing = 14, MinWidth = 430 };
             panel.Children.Add(language);
+            panel.Children.Add(performance);
             panel.Children.Add(notifications);
             panel.Children.Add(minimizeOnClose);
             panel.Children.Add(autoUpdates);
             panel.Children.Add(checkUpdatesOnStartup);
             panel.Children.Add(startWithWindows);
 
+            UpdateIntegrationState();
+            var integrationTitle = new TextBlock
+            {
+                Text = T("Windows entegrasyonu", "Windows integration"),
+                FontSize = 16,
+                Margin = new Thickness(0, 8, 0, 0)
+            };
+            var integrationStatus = new TextBlock
+            {
+                Text = IntegrationStatusText.Text,
+                TextWrapping = TextWrapping.Wrap,
+                Opacity = 0.72
+            };
+            var explorerIntegration = new Button
+            {
+                Content = ExplorerIntegrationButton.Content,
+                HorizontalAlignment = HorizontalAlignment.Stretch
+            };
+            explorerIntegration.Click += (_, args) =>
+            {
+                ExplorerIntegrationButton_Click(explorerIntegration, args);
+                integrationStatus.Text = IntegrationStatusText.Text;
+                explorerIntegration.Content = ExplorerIntegrationButton.Content;
+            };
+            var testNotification = new Button
+            {
+                Content = T("Bildirimi test et", "Test notification"),
+                HorizontalAlignment = HorizontalAlignment.Stretch
+            };
+            testNotification.Click += (_, args) => TestNotificationButton_Click(testNotification, args);
+            var diagnostics = new Button
+            {
+                Content = T("Tanılama paketi oluştur", "Create diagnostics package"),
+                HorizontalAlignment = HorizontalAlignment.Stretch
+            };
+            diagnostics.Click += (_, args) => DiagnosticsButton_Click(diagnostics, args);
+            panel.Children.Add(integrationTitle);
+            panel.Children.Add(integrationStatus);
+            panel.Children.Add(explorerIntegration);
+            panel.Children.Add(testNotification);
+            panel.Children.Add(diagnostics);
+
             var dialog = new ContentDialog
             {
                 XamlRoot = RootGrid.XamlRoot,
                 Title = T("Ayarlar", "Settings"),
-                Content = panel,
+                Content = new ScrollViewer
+                {
+                    Content = panel,
+                    MaxHeight = 560,
+                    VerticalScrollBarVisibility = ScrollBarVisibility.Auto
+                },
                 PrimaryButtonText = T("Kaydet", "Save"),
                 CloseButtonText = T("İptal", "Cancel"),
                 DefaultButton = ContentDialogButton.Primary
@@ -1000,6 +1073,8 @@ public sealed partial class MainWindow : Window
             _settings = _settings with
             {
                 Language = (language.SelectedItem as OptionChoice<string>)?.Value ?? _settings.Language,
+                PerformanceMode = (performance.SelectedItem as OptionChoice<TransferPerformanceMode>)?.Value
+                    ?? _settings.PerformanceMode,
                 NotificationsEnabled = notifications.IsOn,
                 MinimizeToTrayWhileRunning = minimizeOnClose.IsOn,
                 AutoDownloadUpdates = autoUpdates.IsOn,
@@ -1056,6 +1131,7 @@ public sealed partial class MainWindow : Window
         AutoDownloadUpdates = _settings.AutoDownloadUpdates,
         CheckForUpdatesOnStartup = _settings.CheckForUpdatesOnStartup,
         StartWithWindows = _settings.StartWithWindows,
+        PerformanceMode = _settings.PerformanceMode,
         WaitForNetwork = WaitForNetworkToggle.IsOn,
         NetworkRetryMinutes = double.IsNaN(NetworkRetryMinutesBox.Value)
             ? 15
@@ -1143,6 +1219,13 @@ public sealed partial class MainWindow : Window
         else
             key.DeleteValue(valueName, throwOnMissingValue: false);
     }
+
+    private string PerformanceModeLabel(TransferPerformanceMode mode) => mode switch
+    {
+        TransferPerformanceMode.FullSpeed => T("Tam hız", "Full speed"),
+        TransferPerformanceMode.LowResource => T("Düşük kaynak", "Low resource"),
+        _ => T("Dengeli", "Balanced")
+    };
 
     private IEnumerable<CopyProfile> GetBuiltInProfiles() => LocalizationService.IsEnglish(_language)
         ?

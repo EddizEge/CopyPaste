@@ -2,6 +2,14 @@ namespace CopyPaste.Core.Models;
 
 public sealed record FavoriteLocation(string Name, string Path);
 
+public enum TransferPerformanceMode
+{
+    Automatic,
+    FullSpeed,
+    Balanced,
+    LowResource
+}
+
 public sealed record AppSettings
 {
     public string DefaultProfileId { get; init; } = "balanced";
@@ -15,6 +23,7 @@ public sealed record AppSettings
     public bool AutoDownloadUpdates { get; init; } = true;
     public bool CheckForUpdatesOnStartup { get; init; } = true;
     public bool StartWithWindows { get; init; }
+    public TransferPerformanceMode PerformanceMode { get; init; } = TransferPerformanceMode.Automatic;
     public string Language { get; init; } = "tr-TR";
     public IReadOnlyList<FavoriteLocation> FavoriteLocations { get; init; } = [];
     public IReadOnlyList<string> RecentSources { get; init; } = [];

@@ -20,6 +20,8 @@ public sealed class CopyJob
     public required string SourcePath { get; init; }
     public required string DestinationPath { get; init; }
     public required CopyProfile Profile { get; init; }
+    public TransferPerformanceMode RequestedPerformanceMode { get; init; } = TransferPerformanceMode.Automatic;
+    public TransferPerformanceMode ActivePerformanceMode { get; set; } = TransferPerformanceMode.Balanced;
     public CopyJobOptions Options { get; init; } = new();
     public CopyJobStatus Status { get; set; } = CopyJobStatus.Ready;
     public DateTimeOffset CreatedAt { get; init; } = DateTimeOffset.Now;
