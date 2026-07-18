@@ -64,6 +64,7 @@ public sealed partial class MainWindow : Window
     {
         InitializeComponent();
         _startupJob = shellRequest?.ScheduledJob;
+        _useBackupModeForSource = shellRequest?.UseBackupMode == true;
         _startupSourcePaths = shellRequest?.SourcePaths ?? [];
         _startupDestinationPath = shellRequest?.DestinationPath;
         _failedItemRetryService = new FailedItemRetryService(_runner);
@@ -161,7 +162,7 @@ public sealed partial class MainWindow : Window
         try
         {
             var currentVersion = Assembly.GetExecutingAssembly().GetName().Version
-                ?? new Version(1, 5, 0, 0);
+                ?? new Version(1, 5, 1, 0);
             var result = await _updateService.CheckAsync(currentVersion);
             switch (result.Status)
             {
@@ -298,6 +299,12 @@ public sealed partial class MainWindow : Window
 
     private async void ProtectedSourceButton_Click(object sender, RoutedEventArgs e)
     {
+        if (!ProtectedFolderPickerService.IsElevated())
+        {
+            if (ProtectedFolderPickerService.LaunchElevatedSession(DestinationTextBox.Text))
+                Close();
+            return;
+        }
         var path = await ProtectedFolderPickerService.PickAsync();
         if (string.IsNullOrWhiteSpace(path))
             return;

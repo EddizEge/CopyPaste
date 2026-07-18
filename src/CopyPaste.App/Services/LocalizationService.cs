@@ -27,6 +27,8 @@ public static class LocalizationService
         ("Transfer ayarları", "Transfer settings"), ("Mevcut dosyalar", "Existing files"), ("Doğrulama", "Verification"),
         ("Klasör kopyalama biçimi", "Folder copy mode"),
         ("Korumalı klasörü yönetici olarak seç", "Select a protected folder as administrator"),
+        ("Korumalı kaynak yönetici yetkisiyle açıldı. Sahiplik ve klasör izinleri değiştirilmedi.",
+            "The protected source was opened with administrator rights. Ownership and folder permissions were not changed."),
         ("Gelişmiş seçenekler", "Advanced options"), ("Dosya filtreleri", "File filters"),
         ("Hariç tutulacak klasörler", "Excluded folders"), ("Hata olsa da sıradaki işe geç", "Continue to next job after an error"),
         ("Transfer sonunda bildirim göster", "Show notification when transfer finishes"),

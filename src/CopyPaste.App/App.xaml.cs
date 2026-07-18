@@ -33,6 +33,50 @@ public partial class App : Application
     protected override async void OnLaunched(Microsoft.UI.Xaml.LaunchActivatedEventArgs args)
     {
         var commandLine = Environment.GetCommandLineArgs();
+        var protectedSessionIndex = Array.FindIndex(commandLine, argument =>
+            argument.Equals("--protected-session", StringComparison.OrdinalIgnoreCase));
+        if (protectedSessionIndex >= 0 && protectedSessionIndex + 1 < commandLine.Length)
+        {
+            var resultFile = commandLine[protectedSessionIndex + 1];
+            var destination = GetArgumentValue(commandLine, "--destination");
+            var pickerWindow = new ProtectedFolderPickerWindow(resultFile);
+            _window = pickerWindow;
+            pickerWindow.Closed += (_, _) =>
+            {
+                try
+                {
+                    if (!File.Exists(resultFile))
+                        return;
+                    var source = File.ReadAllText(resultFile).Trim();
+                    if (!Path.IsPathFullyQualified(source))
+                        return;
+                    var executable = Environment.ProcessPath
+                        ?? throw new InvalidOperationException("Uygulama yolu belirlenemedi.");
+                    var startInfo = new ProcessStartInfo
+                    {
+                        FileName = executable,
+                        UseShellExecute = false
+                    };
+                    startInfo.ArgumentList.Add("--elevated-source");
+                    startInfo.ArgumentList.Add(source);
+                    if (!string.IsNullOrWhiteSpace(destination))
+                    {
+                        startInfo.ArgumentList.Add("--destination");
+                        startInfo.ArgumentList.Add(destination);
+                    }
+                    Process.Start(startInfo);
+                }
+                finally
+                {
+                    try { File.Delete(resultFile); }
+                    catch (IOException) { }
+                    Exit();
+                }
+            };
+            pickerWindow.Activate();
+            return;
+        }
+
         var protectedPickerIndex = Array.FindIndex(commandLine, argument =>
             argument.Equals("--protected-folder-picker", StringComparison.OrdinalIgnoreCase));
         if (protectedPickerIndex >= 0 && protectedPickerIndex + 1 < commandLine.Length)
@@ -57,26 +101,36 @@ public partial class App : Application
             return;
         }
 
-        _mainInstance = AppInstance.FindOrRegisterForKey("CopyPaste.Main");
-        if (!_mainInstance.IsCurrent)
+        var elevatedSource = GetArgumentValue(commandLine, "--elevated-source");
+        if (string.IsNullOrWhiteSpace(elevatedSource))
         {
-            await _mainInstance.RedirectActivationToAsync(AppInstance.GetCurrent().GetActivatedEventArgs());
-            Process.GetCurrentProcess().Kill();
-            return;
+            _mainInstance = AppInstance.FindOrRegisterForKey("CopyPaste.Main");
+            if (!_mainInstance.IsCurrent)
+            {
+                await _mainInstance.RedirectActivationToAsync(AppInstance.GetCurrent().GetActivatedEventArgs());
+                Process.GetCurrentProcess().Kill();
+                return;
+            }
+            _mainInstance.Activated += (_, activation) =>
+            {
+                if (_window is { } window)
+                    window.DispatcherQueue.TryEnqueue(async () =>
+                        await HandleRedirectedActivationAsync(activation));
+            };
         }
-        _mainInstance.Activated += (_, activation) =>
-        {
-            if (_window is { } window)
-                window.DispatcherQueue.TryEnqueue(async () =>
-                    await HandleRedirectedActivationAsync(activation));
-        };
 
         _notificationService = new AppNotificationService();
         _notificationService.Initialize();
 
-        var shellRequest = ShellLaunchRequestResolver.Resolve(
-            Environment.GetCommandLineArgs(),
-            new ShellCopyStateStore());
+        var shellRequest = string.IsNullOrWhiteSpace(elevatedSource)
+            ? ShellLaunchRequestResolver.Resolve(commandLine, new ShellCopyStateStore())
+            : new ShellLaunchRequest(
+                ShellLaunchMode.Normal,
+                elevatedSource,
+                GetArgumentValue(commandLine, "--destination"),
+                "Korumalı kaynak yönetici yetkisiyle açıldı. Sahiplik ve klasör izinleri değiştirilmedi.",
+                false,
+                UseBackupMode: true);
         if (shellRequest.ScheduleId is { } scheduleId)
         {
             var schedule = await new ScheduleStore().FindAsync(scheduleId);
@@ -146,6 +200,13 @@ public partial class App : Application
             return result.ToArray();
         }
         finally { LocalFree(pointer); }
+    }
+
+    private static string? GetArgumentValue(string[] arguments, string name)
+    {
+        var index = Array.FindIndex(arguments, argument =>
+            argument.Equals(name, StringComparison.OrdinalIgnoreCase));
+        return index >= 0 && index + 1 < arguments.Length ? arguments[index + 1] : null;
     }
 
     [DllImport("shell32.dll", SetLastError = true)]

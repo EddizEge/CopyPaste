@@ -15,7 +15,8 @@ public sealed record ShellLaunchRequest(
     bool AutoStart,
     Guid? ScheduleId = null,
     CopyPaste.Core.Models.CopyJob? ScheduledJob = null,
-    IReadOnlyList<string>? SourcePaths = null);
+    IReadOnlyList<string>? SourcePaths = null,
+    bool UseBackupMode = false);
 
 public static class ShellLaunchRequestResolver
 {

@@ -1,5 +1,10 @@
 # Değişiklik günlüğü
 
+## 1.5.1
+
+- Korumalı kaynak akışı tek UAC onayıyla yükseltilmiş bir CopyPaste oturumuna taşındı; böylece Robocopy `/ZB` yedekleme yetkisi gerçek transfer sırasında da kullanılabilir.
+- Korumalı kaynak düğmesi daha anlaşılır bir `+` simgesiyle güncellendi.
+
 ## 1.5.0
 
 - Seçilen klasörün kendisini veya yalnızca içeriğini kopyalama seçeneği eklendi; varsayılan davranış klasörün kendisini kopyalamaktır.
