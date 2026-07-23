@@ -176,15 +176,26 @@
                         </Border>
                         <Border x:Name="UpdateInfoBar" Visibility="Collapsed" Background="#201C3B"
                                 BorderBrush="{StaticResource AccentBrush}" BorderThickness="1" CornerRadius="8" Padding="12,9">
-                            <Grid ColumnSpacing="12">
+                            <Grid ColumnSpacing="12" RowSpacing="7">
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="*" />
                                     <ColumnDefinition Width="Auto" />
                                 </Grid.ColumnDefinitions>
                                 <TextBlock x:Name="UpdateStatusText" Foreground="#DDD9FF" VerticalAlignment="Center"
                                            TextWrapping="Wrap" />
-                                <Button x:Name="OpenUpdateButton" Grid.Column="1" Content="İndir"
-                                        Style="{StaticResource QuietButtonStyle}" Click="OpenUpdateButton_Click" />
+                                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="7">
+                                    <Button x:Name="RollbackUpdateButton" Content="Önceki sürüme dön"
+                                            Visibility="Collapsed" Style="{StaticResource QuietButtonStyle}"
+                                            Click="RollbackUpdateButton_Click" />
+                                    <Button x:Name="OpenUpdateButton" Content="İndir"
+                                            Style="{StaticResource QuietButtonStyle}" Click="OpenUpdateButton_Click" />
+                                </StackPanel>
+                                <ProgressBar x:Name="UpdateDownloadProgressBar" Grid.Row="1" Grid.ColumnSpan="2"
+                                             Visibility="Collapsed" Minimum="0" Maximum="100" Height="4" />
                             </Grid>
                         </Border>
                     </StackPanel>
@@ -231,6 +242,9 @@
                                     <TextBlock x:Name="CurrentFileText" Text="Dosyalar taranıyor…" Foreground="#9CA4B4"
                                                TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
                                     <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="7">
+                                        <Button x:Name="RetryNetworkButton" Content="Şimdi yeniden dene"
+                                                Style="{StaticResource QuietButtonStyle}" Visibility="Collapsed"
+                                                Click="RetryNetworkButton_Click" />
                                         <Button x:Name="PauseButton" Content="Duraklat" Style="{StaticResource QuietButtonStyle}"
                                                 Click="PauseButton_Click" />
                                         <Button x:Name="CancelButton" Content="İptal" Style="{StaticResource QuietButtonStyle}"

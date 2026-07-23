@@ -5,7 +5,8 @@ public enum ScheduleKind
     Daily,
     Weekly,
     Once,
-    WhenIdle
+    WhenIdle,
+    UsbArrival
 }
 
 public sealed record ScheduledTransfer
@@ -18,6 +19,9 @@ public sealed record ScheduledTransfer
     public DayOfWeek DayOfWeek { get; init; } = DayOfWeek.Monday;
     public DateOnly? RunDate { get; init; }
     public int IdleMinutes { get; init; } = 10;
+    public string? UsbVolumeId { get; init; }
+    public string? UsbVolumeLabel { get; init; }
+    public bool RequireAcPower { get; init; }
     public bool Enabled { get; init; } = true;
     public DateTimeOffset CreatedAt { get; init; } = DateTimeOffset.Now;
 }

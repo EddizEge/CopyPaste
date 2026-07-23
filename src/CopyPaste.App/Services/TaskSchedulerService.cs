@@ -1,6 +1,6 @@
 using System.Diagnostics;
-using System.Globalization;
 using CopyPaste.Core.Models;
+using CopyPaste.Core.Services;
 
 namespace CopyPaste.App.Services;
 
@@ -8,54 +8,40 @@ public sealed class TaskSchedulerService
 {
     public async Task RegisterAsync(ScheduledTransfer schedule, CancellationToken cancellationToken = default)
     {
+        if (schedule.Kind == ScheduleKind.UsbArrival)
+            return;
         var executable = Environment.ProcessPath
             ?? throw new InvalidOperationException("Uygulama yolu belirlenemedi.");
-        var arguments = BuildCreateArguments(schedule, executable);
+        var arguments = TaskSchedulerCommandBuilder.BuildCreate(schedule, executable);
         await RunAsync(arguments, cancellationToken).ConfigureAwait(false);
+        if (!schedule.Enabled)
+            await SetEnabledAsync(schedule.Id, false, cancellationToken).ConfigureAwait(false);
     }
 
     public async Task RemoveAsync(Guid id, CancellationToken cancellationToken = default) =>
-        await RunAsync(["/Delete", "/TN", TaskName(id), "/F"], cancellationToken).ConfigureAwait(false);
+        await RunAsync(TaskSchedulerCommandBuilder.BuildDelete(id), cancellationToken).ConfigureAwait(false);
 
-    public static IReadOnlyList<string> BuildCreateArguments(ScheduledTransfer schedule, string executablePath)
+    public async Task SetEnabledAsync(Guid id, bool enabled, CancellationToken cancellationToken = default) =>
+        await RunAsync(TaskSchedulerCommandBuilder.BuildSetEnabled(id, enabled), cancellationToken)
+            .ConfigureAwait(false);
+
+    public async Task RunNowAsync(Guid id, CancellationToken cancellationToken = default) =>
+        await RunAsync(TaskSchedulerCommandBuilder.BuildRunNow(id), cancellationToken).ConfigureAwait(false);
+
+    public static void RunDirect(Guid id)
     {
-        var arguments = new List<string>
+        var executable = Environment.ProcessPath
+            ?? throw new InvalidOperationException("Uygulama yolu belirlenemedi.");
+        var startInfo = new ProcessStartInfo
         {
-            "/Create", "/TN", TaskName(schedule.Id),
-            "/TR", $"\"{executablePath}\" --schedule {schedule.Id:D}",
-            "/RL", "LIMITED", "/F"
+            FileName = executable,
+            UseShellExecute = false
         };
-
-        if (schedule.Kind == ScheduleKind.WhenIdle)
-        {
-            arguments.InsertRange(1,
-                ["/SC", "ONIDLE", "/I", Math.Clamp(schedule.IdleMinutes, 1, 999).ToString(CultureInfo.InvariantCulture)]);
-            return arguments;
-        }
-
-        if (!TimeOnly.TryParseExact(schedule.TimeOfDay, "HH:mm", CultureInfo.InvariantCulture,
-                DateTimeStyles.None, out var time))
-            throw new ArgumentException("Zamanlama saati HH:mm biçiminde olmalıdır.", nameof(schedule));
-
-        string[] trigger = schedule.Kind switch
-        {
-            ScheduleKind.Weekly => new[]
-            {
-                "/SC", "WEEKLY", "/D", schedule.DayOfWeek.ToString()[..3].ToUpperInvariant()
-            },
-            ScheduleKind.Once => new[]
-            {
-                "/SC", "ONCE", "/SD", (schedule.RunDate ?? DateOnly.FromDateTime(DateTime.Today))
-                    .ToString("MM/dd/yyyy", CultureInfo.InvariantCulture)
-            },
-            _ => ["/SC", "DAILY"]
-        };
-        arguments.InsertRange(1, trigger);
-        arguments.InsertRange(arguments.IndexOf("/RL"), ["/ST", time.ToString("HH:mm", CultureInfo.InvariantCulture)]);
-        return arguments;
+        startInfo.ArgumentList.Add("--schedule");
+        startInfo.ArgumentList.Add(id.ToString("D"));
+        _ = Process.Start(startInfo)
+            ?? throw new InvalidOperationException("Zamanlanmış görev başlatılamadı.");
     }
-
-    private static string TaskName(Guid id) => $@"CopyPaste\{id:D}";
 
     private static async Task RunAsync(IReadOnlyList<string> arguments, CancellationToken cancellationToken)
     {

@@ -32,8 +32,9 @@ jobs:
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
           if ([string]::IsNullOrWhiteSpace($env:WINDOWS_CERTIFICATE_BASE64)) {
-            if ($env:ALLOW_UNSIGNED_RELEASE -eq "true" -and $env:RELEASE_TAG -eq "v1.6.0") {
-              Write-Warning "Explicit one-time exception: v1.6.0 application files will remain unsigned."
+            if ($env:ALLOW_UNSIGNED_RELEASE -eq "true" -and
+                $env:RELEASE_TAG -in @("v1.6.0", "v1.7.0")) {
+              Write-Warning "Explicit version-specific exception: $($env:RELEASE_TAG) application files will remain unsigned."
               exit 0
             }
             throw "A trusted signing configuration is required for this release."
@@ -69,8 +70,9 @@ jobs:
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
           if ([string]::IsNullOrWhiteSpace($env:WINDOWS_CERTIFICATE_BASE64)) {
-            if ($env:ALLOW_UNSIGNED_RELEASE -eq "true" -and $env:RELEASE_TAG -eq "v1.6.0") {
-              Write-Warning "Explicit one-time exception: v1.6.0 installer will remain unsigned."
+            if ($env:ALLOW_UNSIGNED_RELEASE -eq "true" -and
+                $env:RELEASE_TAG -in @("v1.6.0", "v1.7.0")) {
+              Write-Warning "Explicit version-specific exception: $($env:RELEASE_TAG) installer will remain unsigned."
               exit 0
             }
             throw "A trusted signing configuration is required for this release."
@@ -94,8 +96,9 @@ jobs:
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
           if ([string]::IsNullOrWhiteSpace($env:WINDOWS_CERTIFICATE_BASE64)) {
-            if ($env:ALLOW_UNSIGNED_RELEASE -eq "true" -and $env:RELEASE_TAG -eq "v1.6.0") {
-              Write-Warning "Unsigned MSIX packages are not distributable; skipping MSIX for v1.6.0."
+            if ($env:ALLOW_UNSIGNED_RELEASE -eq "true" -and
+                $env:RELEASE_TAG -in @("v1.6.0", "v1.7.0")) {
+              Write-Warning "Unsigned MSIX packages are not distributable; skipping MSIX for $($env:RELEASE_TAG)."
               exit 0
             }
             throw "A trusted signing configuration is required for this release."

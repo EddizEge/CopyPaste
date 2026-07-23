@@ -33,6 +33,33 @@ public partial class App : Application
     protected override async void OnLaunched(Microsoft.UI.Xaml.LaunchActivatedEventArgs args)
     {
         var commandLine = Environment.GetCommandLineArgs();
+        var rollbackIndex = Array.FindIndex(commandLine, argument =>
+            argument.Equals("--apply-update-rollback", StringComparison.OrdinalIgnoreCase));
+        if (rollbackIndex >= 0)
+        {
+            if (rollbackIndex + 1 < commandLine.Length
+                && int.TryParse(commandLine[rollbackIndex + 1], out var processId))
+            {
+                try
+                {
+                    using var process = Process.GetProcessById(processId);
+                    await process.WaitForExitAsync();
+                }
+                catch (ArgumentException)
+                {
+                }
+            }
+            var recoveryService = new UpdateRecoveryService();
+            var recoveryState = await recoveryService.LoadAsync();
+            if (recoveryState is not null && await recoveryService.RestoreAsync())
+            {
+                var restoredExecutable = Path.Combine(recoveryState.InstallDirectory, "CopyPaste.App.exe");
+                if (File.Exists(restoredExecutable))
+                    Process.Start(new ProcessStartInfo(restoredExecutable) { UseShellExecute = true });
+            }
+            Exit();
+            return;
+        }
         var protectedSessionIndex = Array.FindIndex(commandLine, argument =>
             argument.Equals("--protected-session", StringComparison.OrdinalIgnoreCase));
         if (protectedSessionIndex >= 0 && protectedSessionIndex + 1 < commandLine.Length)
@@ -154,7 +181,8 @@ public partial class App : Application
                     SourcePath = schedule.Job.SourcePath,
                     DestinationPath = schedule.Job.DestinationPath,
                     ScheduledJob = schedule.Job,
-                    Message = $"Zamanlanmış transfer başlatılıyor: {schedule.Name}"
+                    Message = $"Zamanlanmış transfer başlatılıyor: {schedule.Name}",
+                    ScheduleRequiresAcPower = schedule.RequireAcPower
                 };
         }
 
@@ -185,7 +213,8 @@ public partial class App : Application
                     SourcePath = schedule.Job.SourcePath,
                     DestinationPath = schedule.Job.DestinationRootPath ?? schedule.Job.DestinationPath,
                     ScheduledJob = schedule.Job,
-                    AutoStart = true
+                    AutoStart = true,
+                    ScheduleRequiresAcPower = schedule.RequireAcPower
                 };
             }
         }

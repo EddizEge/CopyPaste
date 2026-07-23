@@ -10,6 +10,23 @@ public static class ReleaseNotesCatalog
 {
     public static IReadOnlyList<ReleaseNote> All { get; } =
     [
+        new("1.7.0", false,
+        [
+            "Zamanlanmış transferler düzenlenebilir, duraklatılıp yeniden etkinleştirilebilir, hemen çalıştırılabilir ve silinebilir.",
+            "Kuyruk checkpoint'leri sürümlü ve atomik kaydedilir; bozuk ana kayıt son geçerli yedekten kurtarılır ve aktif ilerleme düzenli olarak saklanır.",
+            "Kalıcı birim kimliğiyle USB sürücüsü varış tetikleyicisi ve yalnızca AC gücünde çalışma koşulu eklendi.",
+            "NAS/ağ işleri erişilemeyen yolu, geri sayımı ve yeniden deneme sayısını gösterir; kullanıcı hemen yeniden deneyebilir ve durum yeniden başlatmada kurtarılır.",
+            "Güncelleme ilerleme çubuğu, şimdi/transferlerden sonra/çıkışta kurulum seçenekleri ve standart kullanıcı kurulumları için doğrulanmış yerel geri dönüş yolu eklendi.",
+            "1.7.0 Setup ve portable ZIP paketleri geçici olarak Authenticode imzasız yayımlanabilir; SHA-256 değerleri yayımlanır ve imzasız MSIX dağıtılmaz."
+        ],
+        [
+            "Scheduled transfers can be edited, paused and resumed, run immediately, and deleted.",
+            "Queue checkpoints are versioned and written atomically; a corrupt primary record recovers from the last valid backup and active progress is saved regularly.",
+            "A USB-drive arrival trigger using a persistent volume identity and an AC-power-only condition were added.",
+            "NAS/network jobs show the unavailable path, countdown, and retry count; users can retry immediately and the state is recovered after restart.",
+            "An update progress bar, install-now/after-transfers/on-exit timing, and a verified local rollback path for standard per-user installations were added.",
+            "The 1.7.0 Setup and portable ZIP may be published temporarily without Authenticode signatures; SHA-256 hashes are published and no unsigned MSIX is distributed."
+        ]),
         new("1.6.0", false,
         [
             "Gerçek Robocopy /L önizlemesi; yeni, üzerine yazılacak, atlanacak ve hatalı dosyaları planlar.",

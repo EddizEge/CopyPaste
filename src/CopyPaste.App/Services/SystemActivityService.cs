@@ -16,7 +16,7 @@ public static class SystemActivityService
             : TransferPerformanceMode.Balanced;
     }
 
-    private static TimeSpan GetIdleTime()
+    public static TimeSpan GetIdleTime()
     {
         var info = new LastInputInfo { Size = (uint)Marshal.SizeOf<LastInputInfo>() };
         return GetLastInputInfo(ref info)

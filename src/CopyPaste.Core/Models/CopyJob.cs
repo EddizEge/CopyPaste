@@ -9,7 +9,15 @@ public enum CopyJobStatus
     CompletedWithWarnings,
     CompletedWithErrors,
     Cancelled,
-    Failed
+    Failed,
+    WaitingForNetwork
+}
+
+public enum QueueRecoveryReason
+{
+    None,
+    UnexpectedShutdown,
+    NetworkUnavailable
 }
 
 public sealed record CopyFailure(string Path, string Reason, int? ErrorCode = null);
@@ -39,6 +47,12 @@ public sealed class CopyJob
     public List<CopyFailure> Failures { get; set; } = [];
     public long EstimatedTotalBytes { get; set; }
     public int EstimatedFileCount { get; set; }
+    public DateTimeOffset? LastCheckpointAt { get; set; }
+    public long LastKnownBytesTransferred { get; set; }
+    public int LastKnownCompletedFiles { get; set; }
+    public QueueRecoveryReason RecoveryReason { get; set; }
+    public int NetworkRetryAttempt { get; set; }
+    public DateTimeOffset? NetworkWaitUntil { get; set; }
 }
 
 public sealed record RobocopyProgress(

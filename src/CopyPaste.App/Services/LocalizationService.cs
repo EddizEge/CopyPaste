@@ -65,7 +65,8 @@ public static class LocalizationService
         ("✓ Hatalı dosyalar ayrı listelenir ve yeniden denenebilir", "✓ Failed files are listed separately and can be retried"),
         ("Dil", "Language"), ("Türkçe", "Turkish"), ("İngilizce", "English"),
         ("Açık", "On"), ("Kapalı", "Off"),
-        ("İptal", "Cancel"), ("Duraklat", "Pause"), ("İndir", "Download")
+        ("İptal", "Cancel"), ("Duraklat", "Pause"), ("İndir", "Download"),
+        ("Şimdi yeniden dene", "Retry now"), ("Önceki sürüme dön", "Return to previous version")
     ];
 
     public static bool IsEnglish(string? language) =>

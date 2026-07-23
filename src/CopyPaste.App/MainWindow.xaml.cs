@@ -29,6 +29,7 @@ public sealed partial class MainWindow : Window
     private readonly QueueStateStore _queueStateStore = new();
     private readonly GitHubUpdateService _updateService = new();
     private readonly UpdateDownloadService _updateDownloadService = new();
+    private readonly UpdateRecoveryService _updateRecoveryService = new();
     private readonly FailedItemRetryService _failedItemRetryService;
     private readonly TransferReportService _reportService = new();
     private readonly NetworkAvailabilityService _networkAvailability = new();
@@ -50,16 +51,25 @@ public sealed partial class MainWindow : Window
     private Uri? _availableUpdateUri;
     private UpdateCheckResult? _availableUpdate;
     private string? _downloadedUpdatePath;
+    private string? _pendingUpdateInstallPath;
+    private UpdateInstallTiming? _pendingUpdateInstallTiming;
+    private bool _isLaunchingRollback;
+    private bool _isLaunchingUpdate;
     private bool _isUpdateCheckRunning;
     private bool _closeConfirmed;
     private bool _closeDialogOpen;
     private bool _settingsDialogOpen;
     private bool _useBackupModeForSource;
     private bool _rootLoaded;
+    private int _queueCheckpointInFlight;
+    private DateTimeOffset _lastProgressCheckpointAt = DateTimeOffset.MinValue;
+    private TaskCompletionSource? _networkRetrySignal;
     private CopyJob? _lastResultJob;
     private readonly CopyJob? _startupJob;
     private readonly IReadOnlyList<string> _startupSourcePaths;
     private readonly string? _startupDestinationPath;
+    private readonly bool _startupScheduleRequiresAcPower;
+    private readonly UsbDriveMonitor _usbDriveMonitor;
     private IReadOnlyList<string> _pendingMultiSourcePaths = [];
 
     public MainWindow(ShellLaunchRequest? shellRequest = null, AppNotificationService? notificationService = null)
@@ -70,8 +80,11 @@ public sealed partial class MainWindow : Window
         _startupSourcePaths = shellRequest?.SourcePaths ?? [];
         _pendingMultiSourcePaths = _startupSourcePaths;
         _startupDestinationPath = shellRequest?.DestinationPath;
+        _startupScheduleRequiresAcPower = shellRequest?.ScheduleRequiresAcPower == true;
         _failedItemRetryService = new FailedItemRetryService(_runner);
         _notificationService = notificationService ?? new AppNotificationService();
+        _usbDriveMonitor = new UsbDriveMonitor(drive =>
+            DispatcherQueue.TryEnqueue(async () => await HandleUsbDriveArrivedAsync(drive)));
         _trayIcon = new TrayIconService(this);
         var windowId = Microsoft.UI.Win32Interop.GetWindowIdFromWindow(WindowNative.GetWindowHandle(this));
         _appWindow = AppWindow.GetFromWindowId(windowId);
@@ -112,6 +125,7 @@ public sealed partial class MainWindow : Window
     private async Task InitializeAsync(bool autoStart)
     {
         await LoadSettingsAsync();
+        await InitializeUpdateRecoveryAsync();
         await LoadQueueStateAsync();
         await LoadHistoryAsync();
         if (_diagnosticsService.HasCrashReport)
@@ -123,6 +137,14 @@ public sealed partial class MainWindow : Window
         }
         if (_startupJob is not null)
             LoadJobIntoForm(_startupJob);
+        if (autoStart && _startupScheduleRequiresAcPower && !PowerStatusService.IsOnAcPower())
+        {
+            autoStart = false;
+            ValidationText.Text = T(
+                "Zamanlanmış görev yalnızca AC gücünde çalışacak şekilde ayarlandı; bu çalıştırma atlandı.",
+                "The scheduled task is configured to run only on AC power; this run was skipped.");
+            ValidationInfoBar.Visibility = Visibility.Visible;
+        }
         if (autoStart && _startupSourcePaths.Count > 1 && !string.IsNullOrWhiteSpace(_startupDestinationPath))
         {
             foreach (var sourcePath in _startupSourcePaths)
@@ -140,6 +162,7 @@ public sealed partial class MainWindow : Window
         }
         if (_settings.CheckForUpdatesOnStartup)
             await CheckForUpdatesAsync(manual: false);
+        _usbDriveMonitor.Start();
     }
 
     private void RootGrid_Loaded(object sender, RoutedEventArgs e)
@@ -226,39 +249,112 @@ public sealed partial class MainWindow : Window
 
     private async void OpenUpdateButton_Click(object sender, RoutedEventArgs e)
     {
+        if (_availableUpdate is null
+            && !string.IsNullOrWhiteSpace(_pendingUpdateInstallPath)
+            && File.Exists(_pendingUpdateInstallPath))
+        {
+            await LaunchPreparedUpdateAsync();
+            return;
+        }
         if (_availableUpdate is not { HasUpdate: true } update)
         {
             if (_availableUpdateUri is not null)
                 Process.Start(new ProcessStartInfo(_availableUpdateUri.AbsoluteUri) { UseShellExecute = true });
             return;
         }
-        if (_isQueueRunning)
-        {
-            UpdateStatusText.Text = T("Aktif transfer tamamlandıktan sonra güncellemeyi kurabilirsiniz.",
-                "You can install the update after the active transfer finishes.");
-            return;
-        }
-
         var updatePath = File.Exists(_downloadedUpdatePath) ? _downloadedUpdatePath : await DownloadUpdateAsync(update);
         if (string.IsNullOrWhiteSpace(updatePath))
             return;
 
-        UpdateStatusText.Text = T("Güncelleme SHA-256 ile doğrulandı. Kurulum başlatılıyor…",
-            "Update verified with SHA-256. Starting setup…");
-        OpenUpdateButton.Content = T("Doğrulandı", "Verified");
-        Process.Start(new ProcessStartInfo(updatePath)
+        var timing = new ComboBox
         {
-            UseShellExecute = true,
-            Arguments = "/CLOSEAPPLICATIONS /RESTARTAPPLICATIONS"
-        });
+            Header = T("Kurulum zamanı", "Installation timing"),
+            DisplayMemberPath = "Label",
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            ItemsSource = new[]
+            {
+                new OptionChoice<UpdateInstallTiming>(UpdateInstallTiming.Now,
+                    T("Şimdi kur ve yeniden başlat", "Install and restart now")),
+                new OptionChoice<UpdateInstallTiming>(UpdateInstallTiming.AfterTransfers,
+                    T("Aktif transferlerden sonra", "After active transfers")),
+                new OptionChoice<UpdateInstallTiming>(UpdateInstallTiming.OnExit,
+                    T("Uygulamadan çıkınca", "When the app exits"))
+            },
+            SelectedIndex = _isQueueRunning ? 1 : 0
+        };
+        var dialog = new ContentDialog
+        {
+            Title = T("Güncellemeyi zamanla", "Schedule update"),
+            Content = timing,
+            PrimaryButtonText = T("Onayla", "Confirm"),
+            CloseButtonText = T("Vazgeç", "Cancel"),
+            XamlRoot = Content.XamlRoot
+        };
+        if (await dialog.ShowAsync() != ContentDialogResult.Primary
+            || timing.SelectedItem is not OptionChoice<UpdateInstallTiming> selectedTiming)
+            return;
+
+        var preparation = await _updateRecoveryService.PrepareAsync(
+            AppContext.BaseDirectory,
+            updatePath,
+            GetCurrentVersion().ToString(3),
+            update.TagName ?? update.LatestVersion?.ToString(3) ?? "unknown");
+        if (!preparation.Success)
+        {
+            var recoveryError = preparation.Error switch
+            {
+                UpdateRecoveryError.UnsupportedInstallLocation => T(
+                    "Güvenli geri dönüş yalnızca standart kullanıcı hesabı kurulumunda kullanılabilir.",
+                    "Safe rollback is available only for the standard per-user installation."),
+                UpdateRecoveryError.InstalledAppNotFound => T(
+                    "Kurulu CopyPaste uygulaması geri dönüş için bulunamadı.",
+                    "The installed CopyPaste application could not be found for rollback."),
+                UpdateRecoveryError.InstallerNotFound => T(
+                    "Doğrulanmış güncelleme paketi bulunamadı.",
+                    "The verified update package could not be found."),
+                _ => T("Geri dönüş yedeği hazırlanamadı.", "The rollback backup could not be prepared.")
+                     + (string.IsNullOrWhiteSpace(preparation.ErrorDetail)
+                         ? string.Empty
+                         : " " + preparation.ErrorDetail)
+            };
+            UpdateStatusText.Text = T(
+                $"Güvenli geri dönüş hazırlanamadığı için uygulama içi kurulum başlatılmadı. {recoveryError}",
+                $"In-app installation was not started because a safe rollback could not be prepared. {recoveryError}");
+            OpenUpdateButton.Content = T("Sürümleri aç", "Open releases");
+            _availableUpdateUri = update.ReleasePageUri;
+            _availableUpdate = null;
+            return;
+        }
+
+        _pendingUpdateInstallPath = updatePath;
+        _pendingUpdateInstallTiming = selectedTiming.Value;
+        await _updateRecoveryService.SetInstallTimingAsync(selectedTiming.Value);
+        RollbackUpdateButton.Visibility = Visibility.Visible;
+        if (selectedTiming.Value == UpdateInstallTiming.Now
+            || selectedTiming.Value == UpdateInstallTiming.AfterTransfers && !_isQueueRunning)
+        {
+            await LaunchPreparedUpdateAsync();
+            return;
+        }
+        UpdateStatusText.Text = selectedTiming.Value == UpdateInstallTiming.AfterTransfers
+            ? T("Güncelleme aktif transferler tamamlanınca kurulacak.",
+                "The update will be installed after active transfers finish.")
+            : T("Güncelleme CopyPaste kapatılınca kurulacak.",
+                "The update will be installed when CopyPaste exits.");
+        OpenUpdateButton.Content = T("Zamanlandı", "Scheduled");
     }
 
     private async Task<string?> DownloadUpdateAsync(UpdateCheckResult update, bool automatic = false)
     {
         OpenUpdateButton.IsEnabled = false;
+        UpdateDownloadProgressBar.Visibility = Visibility.Visible;
+        UpdateDownloadProgressBar.IsIndeterminate = true;
         OpenUpdateButton.Content = automatic ? T("Hazırlanıyor…", "Preparing…") : T("İndiriliyor…", "Downloading…");
         var progress = new Progress<UpdateDownloadProgress>(value =>
         {
+            UpdateDownloadProgressBar.IsIndeterminate = value.Percentage is null;
+            if (value.Percentage is { } progressPercentage)
+                UpdateDownloadProgressBar.Value = progressPercentage;
             OpenUpdateButton.Content = value.Percentage is { } percentage
                 ? T($"İndiriliyor %{percentage:0}", $"Downloading {percentage:0}%")
                 : T($"İndiriliyor {QueueItemViewModel.FormatBytes(value.BytesReceived)}",
@@ -272,6 +368,7 @@ public sealed partial class MainWindow : Window
             UpdateStatusText.Text = download.Error ?? T("Güncelleme indirilemedi.", "The update could not be downloaded.");
             OpenUpdateButton.Content = T("Tekrar dene", "Try again");
             OpenUpdateButton.IsEnabled = true;
+            UpdateDownloadProgressBar.Visibility = Visibility.Collapsed;
             return null;
         }
 
@@ -280,7 +377,121 @@ public sealed partial class MainWindow : Window
             $"{update.TagName} downloaded and verified with SHA-256.");
         OpenUpdateButton.Content = T("Kur ve yeniden başlat", "Install and restart");
         OpenUpdateButton.IsEnabled = true;
+        UpdateDownloadProgressBar.Visibility = Visibility.Collapsed;
         return download.FilePath;
+    }
+
+    private async Task InitializeUpdateRecoveryAsync()
+    {
+        var state = await _updateRecoveryService.LoadAsync();
+        if (state is null || state.Status == UpdateRecoveryStatus.RolledBack)
+            return;
+        if (state.Status == UpdateRecoveryStatus.InstallerLaunched)
+            state = await _updateRecoveryService.BeginHealthCheckAsync() ?? state;
+        var backupExecutable = Path.Combine(state.BackupDirectory, "CopyPaste.App.exe");
+        if (!File.Exists(backupExecutable))
+            return;
+        RollbackUpdateButton.Visibility = Visibility.Visible;
+        if (state.Status == UpdateRecoveryStatus.Prepared && File.Exists(state.InstallerPath))
+        {
+            _pendingUpdateInstallPath = state.InstallerPath;
+            _pendingUpdateInstallTiming = state.InstallTiming;
+            UpdateStatusText.Text = T(
+                "Doğrulanmış güncelleme ve geri dönüş yedeği hazır.",
+                "The verified update and rollback backup are ready.");
+            OpenUpdateButton.Content = T("Şimdi kur", "Install now");
+            OpenUpdateButton.Visibility = Visibility.Visible;
+            UpdateInfoBar.Visibility = Visibility.Visible;
+        }
+        if (state.Status == UpdateRecoveryStatus.HealthCheckPending)
+        {
+            UpdateStatusText.Text = T(
+                $"Güncelleme sonrası sağlık kontrolü etkin. Gerekirse {state.PreviousVersion} sürümüne dönebilirsiniz.",
+                $"Post-update health check is active. You can return to {state.PreviousVersion} if needed.");
+            UpdateInfoBar.Visibility = Visibility.Visible;
+        }
+    }
+
+    private async Task LaunchPreparedUpdateAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_pendingUpdateInstallPath)
+            || !File.Exists(_pendingUpdateInstallPath))
+        {
+            UpdateStatusText.Text = T("Hazırlanan güncelleme paketi bulunamadı.",
+                "The prepared update package could not be found.");
+            return;
+        }
+        await _updateRecoveryService.MarkInstallerLaunchedAsync();
+        UpdateStatusText.Text = T("Güncelleme SHA-256 ile doğrulandı. Kurulum başlatılıyor…",
+            "Update verified with SHA-256. Starting setup…");
+        OpenUpdateButton.Content = T("Doğrulandı", "Verified");
+        try
+        {
+            _isLaunchingUpdate = true;
+            Process.Start(new ProcessStartInfo(_pendingUpdateInstallPath)
+            {
+                UseShellExecute = true,
+                Arguments = "/CLOSEAPPLICATIONS /RESTARTAPPLICATIONS"
+            });
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception)
+        {
+            _isLaunchingUpdate = false;
+            await _updateRecoveryService.MarkPreparedAsync();
+            UpdateStatusText.Text = T("Güncelleme kurulumu başlatılamadı: ",
+                "The update installer could not be started: ") + ex.Message;
+            return;
+        }
+        _pendingUpdateInstallPath = null;
+        _pendingUpdateInstallTiming = null;
+    }
+
+    private async void RollbackUpdateButton_Click(object sender, RoutedEventArgs e)
+    {
+        var state = await _updateRecoveryService.LoadAsync();
+        var backupExecutable = state is null
+            ? null
+            : Path.Combine(state.BackupDirectory, "CopyPaste.App.exe");
+        if (state is null || string.IsNullOrWhiteSpace(backupExecutable) || !File.Exists(backupExecutable))
+        {
+            UpdateStatusText.Text = T("Geri dönüş yedeği bulunamadı.", "The rollback backup could not be found.");
+            RollbackUpdateButton.Visibility = Visibility.Collapsed;
+            return;
+        }
+        var dialog = new ContentDialog
+        {
+            Title = T("Önceki sürüme dön", "Return to previous version"),
+            Content = T(
+                $"{state.PreviousVersion} sürümünün doğrulanmış yerel yedeği geri yüklenecek ve CopyPaste yeniden başlatılacak.",
+                $"The verified local backup of {state.PreviousVersion} will be restored and CopyPaste will restart."),
+            PrimaryButtonText = T("Geri dön", "Roll back"),
+            CloseButtonText = T("Vazgeç", "Cancel"),
+            XamlRoot = Content.XamlRoot
+        };
+        if (await dialog.ShowAsync() != ContentDialogResult.Primary)
+            return;
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = backupExecutable,
+            UseShellExecute = false
+        };
+        startInfo.ArgumentList.Add("--apply-update-rollback");
+        startInfo.ArgumentList.Add(Environment.ProcessId.ToString());
+        try
+        {
+            _ = Process.Start(startInfo)
+                ?? throw new InvalidOperationException("Geri dönüş yardımcısı başlatılamadı.");
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception)
+        {
+            UpdateStatusText.Text = T(
+                "Geri dönüş yardımcısı başlatılamadı: ",
+                "The rollback helper could not be started: ") + ex.Message;
+            return;
+        }
+        _isLaunchingRollback = true;
+        _closeConfirmed = true;
+        Close();
     }
 
     private async void BrowseButton_Click(object sender, RoutedEventArgs e)
@@ -770,24 +981,47 @@ public sealed partial class MainWindow : Window
             if (_settings.WaitForNetwork && IsNetworkJob(item.Job)
                 && !await WaitForNetworkAsync(item.Job, _copyCancellation.Token))
             {
-                result = new RobocopyResult(16, CopyJobStatus.Failed,
-                    T("Ağ bağlantısı belirtilen süre içinde geri gelmedi.",
-                        "The network connection did not return within the configured time."));
+                result = _copyCancellation.IsCancellationRequested
+                    ? new RobocopyResult(-1, CopyJobStatus.Cancelled,
+                        T("Ağ bekleme işlemi iptal edildi.", "Waiting for the network was cancelled."))
+                    : new RobocopyResult(16, CopyJobStatus.Failed,
+                        T("Ağ bağlantısı belirtilen süre içinde geri gelmedi.",
+                            "The network connection did not return within the configured time."));
             }
             else
             {
-                result = await _runner.RunAsync(
-                    item.Job,
-                    progress,
-                    _copyCancellation.Token,
-                    logLines.Enqueue);
-                if (_settings.WaitForNetwork && IsNetworkJob(item.Job) && IsLikelyNetworkFailure(result)
-                    && await WaitForNetworkAsync(item.Job, _copyCancellation.Token))
+                const int maximumNetworkResumeAttempts = 5;
+                while (true)
                 {
+                    result = await _runner.RunAsync(
+                        item.Job,
+                        progress,
+                        _copyCancellation.Token,
+                        logLines.Enqueue);
+                    if (!_settings.WaitForNetwork
+                        || !IsNetworkJob(item.Job)
+                        || !IsLikelyNetworkFailure(result))
+                        break;
+                    if (item.Job.NetworkRetryAttempt >= maximumNetworkResumeAttempts)
+                    {
+                        result = new RobocopyResult(16, CopyJobStatus.Failed,
+                            T("Ağ bağlantısı beş yeniden denemeden sonra kararlı hale gelmedi.",
+                                "The network connection did not stabilize after five retry attempts."));
+                        break;
+                    }
+                    if (!await WaitForNetworkAsync(item.Job, _copyCancellation.Token))
+                    {
+                        result = _copyCancellation.IsCancellationRequested
+                            ? new RobocopyResult(-1, CopyJobStatus.Cancelled,
+                                T("Ağ bekleme işlemi iptal edildi.",
+                                    "Waiting for the network was cancelled."))
+                            : new RobocopyResult(16, CopyJobStatus.Failed,
+                                T("Ağ bağlantısı belirtilen süre içinde geri gelmedi.",
+                                    "The network connection did not return within the configured time."));
+                        break;
+                    }
                     logLines.Enqueue(T("--- Ağ bağlantısı geri geldi; yeniden başlatılabilir transfer sürdürülüyor. ---",
                         "--- Network connection restored; resuming the restartable transfer. ---"));
-                    result = await _runner.RunAsync(
-                        item.Job, progress, _copyCancellation.Token, logLines.Enqueue);
                 }
             }
             if (_pauseRequested && result.Status == CopyJobStatus.Cancelled)
@@ -879,6 +1113,22 @@ public sealed partial class MainWindow : Window
         _copyCancellation = null;
         await SaveQueueStateAsync();
         sleepGuard.Dispose();
+        var pendingIds = pendingItems.Select(item => item.Job.Id).ToHashSet();
+        var hasNewlyQueuedWork = _queue.Any(item =>
+            item.Job.Status == CopyJobStatus.Ready && !pendingIds.Contains(item.Job.Id));
+        if (hasNewlyQueuedWork
+            && !pendingItems.Any(item =>
+                item.Job.Status is CopyJobStatus.Cancelled or CopyJobStatus.Paused))
+        {
+            await RunQueueAsync();
+            return;
+        }
+        if (_pendingUpdateInstallTiming == UpdateInstallTiming.AfterTransfers
+            && !string.IsNullOrWhiteSpace(_pendingUpdateInstallPath))
+        {
+            await LaunchPreparedUpdateAsync();
+            return;
+        }
         var finalCompletionAction = CompletionActionPolicy.ResolveForCompletedRun(
             pendingItems.Select(item => item.Job).ToArray());
         if (!_pauseRequested && finalCompletionAction != CompletionAction.None)
@@ -896,6 +1146,20 @@ public sealed partial class MainWindow : Window
     {
         CurrentFileText.Text = progress.Message;
         _activeQueueItem?.SetRunning(progress.Percentage, progress.Message);
+        if (_activeQueueItem is { } activeItem)
+        {
+            if (progress.BytesTransferred is { } bytesTransferred)
+                activeItem.Job.LastKnownBytesTransferred = Math.Max(
+                    activeItem.Job.LastKnownBytesTransferred, bytesTransferred);
+            if (progress.CompletedFiles is { } checkpointCompletedFiles)
+                activeItem.Job.LastKnownCompletedFiles = Math.Max(
+                    activeItem.Job.LastKnownCompletedFiles, checkpointCompletedFiles);
+            if (DateTimeOffset.UtcNow - _lastProgressCheckpointAt >= TimeSpan.FromSeconds(5))
+            {
+                _lastProgressCheckpointAt = DateTimeOffset.UtcNow;
+                _ = SaveProgressCheckpointAsync();
+            }
+        }
         if (progress.Percentage is not { } percentage)
             return;
 
@@ -930,6 +1194,9 @@ public sealed partial class MainWindow : Window
         CancelButton.IsEnabled = false;
         _copyCancellation?.Cancel();
     }
+
+    private void RetryNetworkButton_Click(object sender, RoutedEventArgs e) =>
+        _networkRetrySignal?.TrySetResult();
 
     private async void ClearQueueButton_Click(object sender, RoutedEventArgs e)
     {
@@ -1045,6 +1312,14 @@ public sealed partial class MainWindow : Window
         }
         if (!request.AutoStart)
             return;
+        if (request.ScheduleRequiresAcPower && !PowerStatusService.IsOnAcPower())
+        {
+            ValidationText.Text = T(
+                "Zamanlanmış görev yalnızca AC gücünde çalışacak şekilde ayarlandı; bu çalıştırma atlandı.",
+                "The scheduled task is configured to run only on AC power; this run was skipped.");
+            ValidationInfoBar.Visibility = Visibility.Visible;
+            return;
+        }
         if (request.SourcePaths is { Count: > 1 } sources
             && !string.IsNullOrWhiteSpace(request.DestinationPath))
         {
@@ -1111,10 +1386,77 @@ public sealed partial class MainWindow : Window
         finally { _closeDialogOpen = false; }
     }
 
-    private void MainWindow_Closed(object sender, WindowEventArgs args)
+    private async void MainWindow_Closed(object sender, WindowEventArgs args)
     {
         _appWindow.Closing -= AppWindow_Closing;
+        _usbDriveMonitor.Dispose();
         _trayIcon.Dispose();
+        if (_pendingUpdateInstallTiming == UpdateInstallTiming.OnExit
+            && !string.IsNullOrWhiteSpace(_pendingUpdateInstallPath)
+            && File.Exists(_pendingUpdateInstallPath))
+        {
+            await _updateRecoveryService.MarkInstallerLaunchedAsync();
+            try
+            {
+                Process.Start(new ProcessStartInfo(_pendingUpdateInstallPath)
+                {
+                    UseShellExecute = true,
+                    Arguments = "/CLOSEAPPLICATIONS /RESTARTAPPLICATIONS"
+                });
+            }
+            catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception)
+            {
+                await _updateRecoveryService.MarkPreparedAsync();
+            }
+            return;
+        }
+        if (!_isLaunchingRollback && !_isLaunchingUpdate
+            && await _updateRecoveryService.LoadAsync() is
+                { Status: UpdateRecoveryStatus.HealthCheckPending })
+            await _updateRecoveryService.MarkHealthyAsync();
+    }
+
+    private async Task HandleUsbDriveArrivedAsync(UsbDriveIdentity drive)
+    {
+        var matchingSchedules = (await _scheduleStore.LoadAsync())
+            .Where(schedule => UsbScheduleMatcher.Matches(schedule, drive))
+            .ToList();
+        foreach (var schedule in matchingSchedules)
+        {
+            if (_queue.Any(item =>
+                    item.Job.Status is CopyJobStatus.Ready or CopyJobStatus.Running
+                        or CopyJobStatus.WaitingForNetwork
+                    && item.Job.SourcePath.Equals(
+                        schedule.Job.SourcePath, StringComparison.OrdinalIgnoreCase)
+                    && item.Job.DestinationPath.Equals(
+                        schedule.Job.DestinationPath, StringComparison.OrdinalIgnoreCase)))
+                continue;
+            var triggerDecision = UsbScheduleMatcher.Evaluate(
+                schedule, drive, PowerStatusService.IsOnAcPower());
+            if (triggerDecision == UsbScheduleTriggerDecision.AcPowerRequired)
+            {
+                PreflightText.Text = T(
+                    $"{schedule.Name}, {drive.DisplayName} bağlandığında algılandı ancak AC güç koşulu sağlanmadı.",
+                    $"{schedule.Name} detected {drive.DisplayName}, but the AC power condition was not met.");
+                PreflightInfoBar.Visibility = Visibility.Visible;
+                continue;
+            }
+            if (triggerDecision != UsbScheduleTriggerDecision.Ready)
+                continue;
+            try
+            {
+                TaskSchedulerService.RunDirect(schedule.Id);
+                PreflightText.Text = T(
+                    $"{schedule.Name}, {drive.DisplayName} bağlandığı için başlatıldı.",
+                    $"{schedule.Name} started because {drive.DisplayName} was connected.");
+                PreflightInfoBar.Visibility = Visibility.Visible;
+            }
+            catch (InvalidOperationException ex)
+            {
+                ValidationText.Text = T("USB görevi başlatılamadı: ", "Could not start USB task: ") + ex.Message;
+                ValidationInfoBar.Visibility = Visibility.Visible;
+            }
+        }
     }
 
     private void UpdateIntegrationState()
@@ -1208,10 +1550,9 @@ public sealed partial class MainWindow : Window
     private async void ScheduleButton_Click(object sender, RoutedEventArgs e)
     {
         var schedules = (await _scheduleStore.LoadAsync()).ToList();
-        var choices = schedules.Select(schedule => new ScheduleChoice(
-            schedule,
-            $"{schedule.Name} • {schedule.TimeOfDay}\n{schedule.Job.SourcePath} → {schedule.Job.DestinationPath}"))
-            .ToList();
+        var choices = new List<ScheduleChoice>();
+        ScheduledTransfer? editingSchedule = null;
+        ContentDialog? dialog = null;
         var list = new ListView
         {
             ItemsSource = choices,
@@ -1220,8 +1561,6 @@ public sealed partial class MainWindow : Window
             MinWidth = 620,
             MaxHeight = 220
         };
-        if (choices.Count > 0)
-            list.SelectedIndex = 0;
         var nameBox = new TextBox
         {
             Header = T("Görev adı", "Task name"),
@@ -1244,7 +1583,8 @@ public sealed partial class MainWindow : Window
                 new OptionChoice<ScheduleKind>(ScheduleKind.Daily, T("Her gün", "Daily")),
                 new OptionChoice<ScheduleKind>(ScheduleKind.Weekly, T("Her hafta", "Weekly")),
                 new OptionChoice<ScheduleKind>(ScheduleKind.Once, T("Tek sefer", "Once")),
-                new OptionChoice<ScheduleKind>(ScheduleKind.WhenIdle, T("Bilgisayar boşta olduğunda", "When the computer is idle"))
+                new OptionChoice<ScheduleKind>(ScheduleKind.WhenIdle, T("Bilgisayar boşta olduğunda", "When the computer is idle")),
+                new OptionChoice<ScheduleKind>(ScheduleKind.UsbArrival, T("USB sürücüsü bağlandığında", "When a USB drive is connected"))
             },
             SelectedIndex = 0
         };
@@ -1281,108 +1621,488 @@ public sealed partial class MainWindow : Window
             HorizontalAlignment = HorizontalAlignment.Stretch,
             Visibility = Visibility.Collapsed
         };
-        frequency.SelectionChanged += (_, _) =>
+        var usbDriveChoices = UsbDriveMonitor.GetConnectedDrives()
+            .Select(drive => new OptionChoice<UsbDriveIdentity>(drive, drive.DisplayName))
+            .ToList();
+        var usbDrive = new ComboBox
+        {
+            Header = T("İzlenecek USB sürücüsü", "USB drive to watch"),
+            DisplayMemberPath = "Label",
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            ItemsSource = usbDriveChoices,
+            SelectedIndex = usbDriveChoices.Count > 0 ? 0 : -1,
+            Visibility = Visibility.Collapsed,
+            PlaceholderText = T("Bağlı bir USB sürücüsü seçin", "Select a connected USB drive")
+        };
+        var usbHelpText = new TextBlock
+        {
+            Text = T(
+                "USB tetikleyicisi için CopyPaste'in açık veya sistem tepsisinde çalışıyor olması gerekir.",
+                "CopyPaste must be open or running in the system tray for the USB trigger."),
+            TextWrapping = TextWrapping.Wrap,
+            Style = (Style)Application.Current.Resources["MutedTextStyle"],
+            Visibility = Visibility.Collapsed
+        };
+        var requireAcPower = new ToggleSwitch
+        {
+            Header = T("Güç koşulu", "Power condition"),
+            OnContent = T("Yalnızca AC gücünde çalıştır", "Run only on AC power"),
+            OffContent = T("Pil veya AC gücünde çalıştır", "Run on battery or AC power")
+        };
+        var sourceSummary = new TextBlock
+        {
+            TextWrapping = TextWrapping.Wrap,
+            Style = (Style)Application.Current.Resources["MutedTextStyle"]
+        };
+        var emptyScheduleText = new TextBlock
+        {
+            Text = T("Henüz kayıtlı zamanlanmış görev yok.", "There are no scheduled tasks yet."),
+            Style = (Style)Application.Current.Resources["MutedTextStyle"]
+        };
+        var actionStatus = new TextBlock
+        {
+            TextWrapping = TextWrapping.Wrap,
+            Visibility = Visibility.Collapsed
+        };
+        var quietButtonStyle = (Style)Application.Current.Resources["QuietButtonStyle"];
+        var editButton = new Button
+        {
+            Content = T("Düzenle", "Edit"),
+            IsEnabled = false,
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            Style = quietButtonStyle
+        };
+        var toggleButton = new Button
+        {
+            Content = T("Duraklat", "Pause"),
+            IsEnabled = false,
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            Style = quietButtonStyle
+        };
+        var runNowButton = new Button
+        {
+            Content = T("Şimdi çalıştır", "Run now"),
+            IsEnabled = false,
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            Style = quietButtonStyle
+        };
+        var deleteButton = new Button
+        {
+            Content = T("Sil", "Delete"),
+            IsEnabled = false,
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            Style = quietButtonStyle
+        };
+        var newButton = new Button
+        {
+            Content = T("Yeni görev ayarları", "New task settings"),
+            HorizontalAlignment = HorizontalAlignment.Left,
+            Style = quietButtonStyle
+        };
+        var actionGrid = new Grid { ColumnSpacing = 8 };
+        for (var index = 0; index < 4; index++)
+            actionGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        Grid.SetColumn(toggleButton, 1);
+        Grid.SetColumn(runNowButton, 2);
+        Grid.SetColumn(deleteButton, 3);
+        actionGrid.Children.Add(editButton);
+        actionGrid.Children.Add(toggleButton);
+        actionGrid.Children.Add(runNowButton);
+        actionGrid.Children.Add(deleteButton);
+
+        string DayLabel(DayOfWeek day) => T(day switch
+        {
+            DayOfWeek.Monday => "Pazartesi",
+            DayOfWeek.Tuesday => "Salı",
+            DayOfWeek.Wednesday => "Çarşamba",
+            DayOfWeek.Thursday => "Perşembe",
+            DayOfWeek.Friday => "Cuma",
+            DayOfWeek.Saturday => "Cumartesi",
+            _ => "Pazar"
+        }, day.ToString());
+
+        string TriggerLabel(ScheduledTransfer schedule) => schedule.Kind switch
+        {
+            ScheduleKind.Weekly => T($"Her {DayLabel(schedule.DayOfWeek)}, {schedule.TimeOfDay}",
+                $"Every {DayLabel(schedule.DayOfWeek)}, {schedule.TimeOfDay}"),
+            ScheduleKind.Once => T(
+                $"{schedule.RunDate?.ToString("dd.MM.yyyy") ?? "—"}, {schedule.TimeOfDay}",
+                $"{schedule.RunDate?.ToString("yyyy-MM-dd") ?? "—"}, {schedule.TimeOfDay}"),
+            ScheduleKind.WhenIdle => T($"{schedule.IdleMinutes} dakika boşta kaldığında",
+                $"After {schedule.IdleMinutes} idle minutes"),
+            ScheduleKind.UsbArrival => T(
+                $"{schedule.UsbVolumeLabel ?? schedule.UsbVolumeId ?? "USB"} bağlandığında",
+                $"When {schedule.UsbVolumeLabel ?? schedule.UsbVolumeId ?? "USB"} is connected"),
+            _ => T($"Her gün, {schedule.TimeOfDay}", $"Daily, {schedule.TimeOfDay}")
+        };
+
+        ScheduleChoice CreateChoice(ScheduledTransfer schedule)
+        {
+            var state = schedule.Enabled ? T("Etkin", "Enabled") : T("Duraklatıldı", "Paused");
+            return new ScheduleChoice(schedule,
+                $"{schedule.Name} • {state} • {TriggerLabel(schedule)}\n" +
+                $"{schedule.Job.SourcePath} → {schedule.Job.DestinationPath}");
+        }
+
+        void UpdateActionState()
+        {
+            var selected = list.SelectedItem as ScheduleChoice;
+            editButton.IsEnabled = selected is not null;
+            toggleButton.IsEnabled = selected is not null;
+            runNowButton.IsEnabled = selected?.Schedule.Enabled == true;
+            deleteButton.IsEnabled = selected is not null;
+            toggleButton.Content = selected?.Schedule.Enabled == false
+                ? T("Devam ettir", "Resume")
+                : T("Duraklat", "Pause");
+        }
+
+        void RefreshChoices(Guid? selectedId = null)
+        {
+            choices = schedules
+                .OrderByDescending(schedule => schedule.Enabled)
+                .ThenBy(schedule => schedule.Name, StringComparer.CurrentCultureIgnoreCase)
+                .Select(CreateChoice)
+                .ToList();
+            list.ItemsSource = null;
+            list.ItemsSource = choices;
+            emptyScheduleText.Visibility = choices.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+            list.Visibility = choices.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
+            actionGrid.Visibility = choices.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
+            var selectedIndex = selectedId is { } id
+                ? choices.FindIndex(choice => choice.Schedule.Id == id)
+                : choices.Count > 0 ? 0 : -1;
+            list.SelectedIndex = selectedIndex;
+            UpdateActionState();
+        }
+
+        void UpdateEditorVisibility()
         {
             var kind = (frequency.SelectedItem as OptionChoice<ScheduleKind>)?.Value ?? ScheduleKind.Daily;
             dayOfWeek.Visibility = kind == ScheduleKind.Weekly ? Visibility.Visible : Visibility.Collapsed;
             runDate.Visibility = kind == ScheduleKind.Once ? Visibility.Visible : Visibility.Collapsed;
             idleMinutes.Visibility = kind == ScheduleKind.WhenIdle ? Visibility.Visible : Visibility.Collapsed;
-            timePicker.Visibility = kind == ScheduleKind.WhenIdle ? Visibility.Collapsed : Visibility.Visible;
-        };
-        var panel = new StackPanel { Spacing = 10 };
-        if (choices.Count > 0)
-        {
-            panel.Children.Add(new TextBlock
-            {
-                Text = T("Kayıtlı görevler", "Saved tasks"),
-                FontWeight = Microsoft.UI.Text.FontWeights.SemiBold
-            });
-            panel.Children.Add(list);
+            usbDrive.Visibility = kind == ScheduleKind.UsbArrival ? Visibility.Visible : Visibility.Collapsed;
+            usbHelpText.Visibility = kind == ScheduleKind.UsbArrival ? Visibility.Visible : Visibility.Collapsed;
+            timePicker.Visibility = kind is ScheduleKind.WhenIdle or ScheduleKind.UsbArrival
+                ? Visibility.Collapsed
+                : Visibility.Visible;
         }
+
+        void LoadEditor(ScheduledTransfer schedule)
+        {
+            editingSchedule = schedule;
+            nameBox.Text = schedule.Name;
+            SelectChoice(frequency, schedule.Kind);
+            SelectChoice(dayOfWeek, schedule.DayOfWeek);
+            runDate.Date = schedule.RunDate is { } date
+                ? new DateTimeOffset(date.ToDateTime(TimeOnly.MinValue))
+                : DateTimeOffset.Now.AddDays(1);
+            idleMinutes.Value = Math.Clamp(schedule.IdleMinutes, 1, 999);
+            requireAcPower.IsOn = schedule.RequireAcPower;
+            if (schedule.Kind == ScheduleKind.UsbArrival && !string.IsNullOrWhiteSpace(schedule.UsbVolumeId))
+            {
+                var savedDrive = usbDriveChoices.FirstOrDefault(choice =>
+                    choice.Value.VolumeId.Equals(schedule.UsbVolumeId, StringComparison.OrdinalIgnoreCase));
+                if (savedDrive is null)
+                {
+                    savedDrive = new OptionChoice<UsbDriveIdentity>(
+                        new UsbDriveIdentity(string.Empty, schedule.UsbVolumeId, schedule.UsbVolumeLabel ?? string.Empty),
+                        T($"{schedule.UsbVolumeLabel ?? "USB"} (şu anda bağlı değil)",
+                            $"{schedule.UsbVolumeLabel ?? "USB"} (not currently connected)"));
+                    usbDriveChoices.Add(savedDrive);
+                    usbDrive.ItemsSource = null;
+                    usbDrive.ItemsSource = usbDriveChoices;
+                }
+                usbDrive.SelectedItem = savedDrive;
+            }
+            if (TimeSpan.TryParse(schedule.TimeOfDay, out var time))
+                timePicker.Time = time;
+            sourceSummary.Text = T(
+                $"Düzenlenen transfer: {schedule.Job.SourcePath} → {schedule.Job.DestinationPath}",
+                $"Editing transfer: {schedule.Job.SourcePath} → {schedule.Job.DestinationPath}");
+            if (dialog is not null)
+                dialog.PrimaryButtonText = T("Değişiklikleri kaydet", "Save changes");
+            UpdateEditorVisibility();
+        }
+
+        void ResetEditor()
+        {
+            editingSchedule = null;
+            nameBox.Text = T("Günlük CopyPaste transferi", "Daily CopyPaste transfer");
+            SelectChoice(frequency, ScheduleKind.Daily);
+            SelectChoice(dayOfWeek, DayOfWeek.Monday);
+            runDate.Date = DateTimeOffset.Now.AddDays(1);
+            idleMinutes.Value = 10;
+            requireAcPower.IsOn = false;
+            timePicker.Time = new TimeSpan(2, 0, 0);
+            usbDrive.SelectedIndex = usbDriveChoices.Count > 0 ? 0 : -1;
+            sourceSummary.Text = T(
+                $"Yeni görev ana formdaki transfer ayarlarını kullanacak: {SourceTextBox.Text} → {DestinationTextBox.Text}",
+                $"The new task will use the transfer settings in the main form: {SourceTextBox.Text} → {DestinationTextBox.Text}");
+            if (dialog is not null)
+                dialog.PrimaryButtonText = T("Yeni görev oluştur", "Create new task");
+            UpdateEditorVisibility();
+        }
+
+        void ShowActionStatus(string message)
+        {
+            actionStatus.Text = message;
+            actionStatus.Visibility = Visibility.Visible;
+        }
+
+        frequency.SelectionChanged += (_, _) =>
+            UpdateEditorVisibility();
+        list.SelectionChanged += (_, _) =>
+        {
+            UpdateActionState();
+            if (editingSchedule is not null
+                && list.SelectedItem is ScheduleChoice selected
+                && selected.Schedule.Id != editingSchedule.Id)
+                LoadEditor(selected.Schedule);
+        };
+
+        editButton.Click += (_, _) =>
+        {
+            if (list.SelectedItem is ScheduleChoice selected)
+                LoadEditor(selected.Schedule);
+        };
+        newButton.Click += (_, _) => ResetEditor();
+        toggleButton.Click += async (_, _) =>
+        {
+            if (list.SelectedItem is not ScheduleChoice selected)
+                return;
+            var updated = selected.Schedule with { Enabled = !selected.Schedule.Enabled };
+            try
+            {
+                if (updated.Kind != ScheduleKind.UsbArrival)
+                    await _taskScheduler.SetEnabledAsync(updated.Id, updated.Enabled);
+                try
+                {
+                    await _scheduleStore.SaveAsync(updated);
+                }
+                catch
+                {
+                    try
+                    {
+                        if (updated.Kind != ScheduleKind.UsbArrival)
+                            await _taskScheduler.SetEnabledAsync(updated.Id, !updated.Enabled);
+                    }
+                    catch (InvalidOperationException) { }
+                    throw;
+                }
+                schedules[schedules.FindIndex(schedule => schedule.Id == updated.Id)] = updated;
+                if (editingSchedule?.Id == updated.Id)
+                    editingSchedule = updated;
+                RefreshChoices(updated.Id);
+                ShowActionStatus(updated.Enabled
+                    ? T("Zamanlanmış görev yeniden etkinleştirildi.", "Scheduled task resumed.")
+                    : T("Zamanlanmış görev duraklatıldı.", "Scheduled task paused."));
+            }
+            catch (Exception ex) when (ex is InvalidOperationException or IOException or UnauthorizedAccessException)
+            {
+                ShowActionStatus(T("Görev durumu değiştirilemedi: ", "Could not change task state: ") + ex.Message);
+            }
+        };
+        runNowButton.Click += async (_, _) =>
+        {
+            if (list.SelectedItem is not ScheduleChoice selected)
+                return;
+            try
+            {
+                if (selected.Schedule.Kind == ScheduleKind.UsbArrival)
+                    TaskSchedulerService.RunDirect(selected.Schedule.Id);
+                else
+                    await _taskScheduler.RunNowAsync(selected.Schedule.Id);
+                ShowActionStatus(T($"{selected.Schedule.Name} şimdi başlatıldı.",
+                    $"{selected.Schedule.Name} was started."));
+            }
+            catch (InvalidOperationException ex)
+            {
+                ShowActionStatus(T("Görev başlatılamadı: ", "Could not start task: ") + ex.Message);
+            }
+        };
+        deleteButton.Click += async (_, _) =>
+        {
+            if (list.SelectedItem is not ScheduleChoice selected)
+                return;
+            try
+            {
+                if (selected.Schedule.Kind != ScheduleKind.UsbArrival)
+                    await _taskScheduler.RemoveAsync(selected.Schedule.Id);
+            }
+            catch (InvalidOperationException) { }
+            try
+            {
+                await _scheduleStore.RemoveAsync(selected.Schedule.Id);
+                schedules.RemoveAll(schedule => schedule.Id == selected.Schedule.Id);
+                if (editingSchedule?.Id == selected.Schedule.Id)
+                {
+                    editingSchedule = null;
+                    dialog!.PrimaryButtonText = T("Yeni görev oluştur", "Create new task");
+                }
+                RefreshChoices();
+                ShowActionStatus(T("Zamanlanmış görev silindi.", "Scheduled task deleted."));
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                ShowActionStatus(T("Görev kaydı silinemedi: ", "Could not delete task record: ") + ex.Message);
+            }
+        };
+
+        var panel = new StackPanel { Spacing = 10 };
+        panel.Children.Add(new TextBlock
+        {
+            Text = T("Kayıtlı görevler", "Saved tasks"),
+            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold
+        });
+        panel.Children.Add(list);
+        panel.Children.Add(emptyScheduleText);
+        panel.Children.Add(actionGrid);
+        panel.Children.Add(actionStatus);
+        panel.Children.Add(new TextBlock
+        {
+            Text = T("Görev ayarları", "Task settings"),
+            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold
+        });
+        panel.Children.Add(newButton);
         panel.Children.Add(nameBox);
         panel.Children.Add(frequency);
         panel.Children.Add(dayOfWeek);
         panel.Children.Add(runDate);
         panel.Children.Add(idleMinutes);
+        panel.Children.Add(usbDrive);
+        panel.Children.Add(usbHelpText);
         panel.Children.Add(timePicker);
-        var dialog = new ContentDialog
+        panel.Children.Add(requireAcPower);
+        panel.Children.Add(sourceSummary);
+        ResetEditor();
+        dialog = new ContentDialog
         {
             Title = T("Zamanlanmış transferler", "Scheduled transfers"),
             Content = new ScrollViewer { Content = panel, MaxHeight = 590, VerticalScrollBarVisibility = ScrollBarVisibility.Auto },
-            PrimaryButtonText = T("Görev oluştur", "Create task"),
-            SecondaryButtonText = choices.Count > 0 ? T("Seçili görevi kaldır", "Remove selected task") : string.Empty,
+            PrimaryButtonText = T("Yeni görev oluştur", "Create new task"),
             CloseButtonText = T("Kapat", "Close"),
             XamlRoot = Content.XamlRoot
         };
+        RefreshChoices();
         var result = await dialog.ShowAsync();
-        if (result == ContentDialogResult.Secondary && list.SelectedItem is ScheduleChoice selected)
-        {
-            try { await _taskScheduler.RemoveAsync(selected.Schedule.Id); }
-            catch (InvalidOperationException) { }
-            await _scheduleStore.RemoveAsync(selected.Schedule.Id);
-            PreflightText.Text = T("Zamanlanmış görev kaldırıldı.", "Scheduled task removed.");
-            PreflightInfoBar.Visibility = Visibility.Visible;
-            return;
-        }
         if (result != ContentDialogResult.Primary)
             return;
 
-        var validation = CopyJobValidator.Validate(SourceTextBox.Text, DestinationTextBox.Text);
-        if (!validation.IsValid
-            || ProfileComboBox.SelectedItem is not CopyProfile profile
-            || ExistingFileBehaviorComboBox.SelectedItem is not OptionChoice<ExistingFileBehavior> existingChoice
-            || VerificationModeComboBox.SelectedItem is not OptionChoice<VerificationMode> verificationChoice)
+        CopyJob job;
+        if (editingSchedule is not null)
         {
-            ValidationText.Text = validation.Error ?? T("Zamanlama ayarları geçersiz.", "Scheduling settings are invalid.");
-            ValidationInfoBar.Visibility = Visibility.Visible;
-            return;
+            job = editingSchedule.Job;
         }
-        var options = CopyJobOptionsParser.Parse(existingChoice.Value, verificationChoice.Value,
-            FilePatternsTextBox.Text, ExcludedDirectoriesTextBox.Text);
-        if (!options.IsValid)
+        else
         {
-            ValidationText.Text = options.Error;
-            ValidationInfoBar.Visibility = Visibility.Visible;
-            return;
-        }
+            var validation = CopyJobValidator.Validate(SourceTextBox.Text, DestinationTextBox.Text);
+            if (!validation.IsValid
+                || ProfileComboBox.SelectedItem is not CopyProfile profile
+                || ExistingFileBehaviorComboBox.SelectedItem is not OptionChoice<ExistingFileBehavior> existingChoice
+                || VerificationModeComboBox.SelectedItem is not OptionChoice<VerificationMode> verificationChoice)
+            {
+                ValidationText.Text = validation.Error ??
+                    T("Zamanlama ayarları geçersiz.", "Scheduling settings are invalid.");
+                ValidationInfoBar.Visibility = Visibility.Visible;
+                return;
+            }
+            var options = CopyJobOptionsParser.Parse(existingChoice.Value, verificationChoice.Value,
+                FilePatternsTextBox.Text, ExcludedDirectoriesTextBox.Text);
+            if (!options.IsValid)
+            {
+                ValidationText.Text = options.Error;
+                ValidationInfoBar.Visibility = Visibility.Visible;
+                return;
+            }
 
-        var schedule = new ScheduledTransfer
-        {
-            Name = string.IsNullOrWhiteSpace(nameBox.Text) ? T("CopyPaste transferi", "CopyPaste transfer") : nameBox.Text.Trim(),
-            TimeOfDay = timePicker.Time.ToString(@"hh\:mm"),
-            Kind = (frequency.SelectedItem as OptionChoice<ScheduleKind>)?.Value ?? ScheduleKind.Daily,
-            DayOfWeek = (dayOfWeek.SelectedItem as OptionChoice<DayOfWeek>)?.Value ?? DayOfWeek.Monday,
-            RunDate = runDate.Date is { } selectedDate ? DateOnly.FromDateTime(selectedDate.DateTime) : null,
-            IdleMinutes = double.IsNaN(idleMinutes.Value) ? 10 : (int)Math.Clamp(idleMinutes.Value, 1, 999),
-            Job = new CopyJob
+            var rootMode = (CopyRootModeComboBox.SelectedItem as OptionChoice<CopyRootMode>)?.Value
+                ?? CopyRootMode.SelectedFolder;
+            job = new CopyJob
             {
                 SourcePath = Path.GetFullPath(SourceTextBox.Text.Trim()),
                 DestinationPath = CopyDestinationResolver.Resolve(
-                    SourceTextBox.Text, DestinationTextBox.Text,
-                    (CopyRootModeComboBox.SelectedItem as OptionChoice<CopyRootMode>)?.Value
-                        ?? CopyRootMode.SelectedFolder),
+                    SourceTextBox.Text, DestinationTextBox.Text, rootMode),
                 DestinationRootPath = Path.GetFullPath(DestinationTextBox.Text.Trim()),
-                RootMode = (CopyRootModeComboBox.SelectedItem as OptionChoice<CopyRootMode>)?.Value
-                    ?? CopyRootMode.SelectedFolder,
+                RootMode = rootMode,
                 Profile = profile,
                 RequestedPerformanceMode = _settings.PerformanceMode,
                 BandwidthLimitMbps = GetJobBandwidthLimit(),
                 CompletionAction = GetJobCompletionAction(),
                 UseBackupMode = _useBackupModeForSource,
                 Options = options.Options!
-            }
+            };
+        }
+
+        var selectedScheduleKind =
+            (frequency.SelectedItem as OptionChoice<ScheduleKind>)?.Value ?? ScheduleKind.Daily;
+        var selectedUsbDrive = (usbDrive.SelectedItem as OptionChoice<UsbDriveIdentity>)?.Value;
+        if (selectedScheduleKind == ScheduleKind.UsbArrival && selectedUsbDrive is null)
+        {
+            ValidationText.Text = T(
+                "USB tetikleyicisi için bağlı bir sürücü seçin.",
+                "Select a connected drive for the USB trigger.");
+            ValidationInfoBar.Visibility = Visibility.Visible;
+            return;
+        }
+        var schedule = new ScheduledTransfer
+        {
+            Id = editingSchedule?.Id ?? Guid.NewGuid(),
+            Name = string.IsNullOrWhiteSpace(nameBox.Text) ? T("CopyPaste transferi", "CopyPaste transfer") : nameBox.Text.Trim(),
+            TimeOfDay = timePicker.Time.ToString(@"hh\:mm"),
+            Kind = selectedScheduleKind,
+            DayOfWeek = (dayOfWeek.SelectedItem as OptionChoice<DayOfWeek>)?.Value ?? DayOfWeek.Monday,
+            RunDate = runDate.Date is { } selectedDate ? DateOnly.FromDateTime(selectedDate.DateTime) : null,
+            IdleMinutes = double.IsNaN(idleMinutes.Value) ? 10 : (int)Math.Clamp(idleMinutes.Value, 1, 999),
+            UsbVolumeId = selectedScheduleKind == ScheduleKind.UsbArrival ? selectedUsbDrive?.VolumeId : null,
+            UsbVolumeLabel = selectedScheduleKind == ScheduleKind.UsbArrival ? selectedUsbDrive?.VolumeLabel : null,
+            RequireAcPower = requireAcPower.IsOn,
+            Enabled = editingSchedule?.Enabled ?? true,
+            CreatedAt = editingSchedule?.CreatedAt ?? DateTimeOffset.Now,
+            Job = job
         };
         try
         {
-            await _taskScheduler.RegisterAsync(schedule);
             await _scheduleStore.SaveAsync(schedule);
+            try
+            {
+                if (schedule.Kind == ScheduleKind.UsbArrival)
+                {
+                    if (editingSchedule is { Kind: not ScheduleKind.UsbArrival })
+                        await _taskScheduler.RemoveAsync(schedule.Id);
+                }
+                else
+                {
+                    await _taskScheduler.RegisterAsync(schedule);
+                }
+            }
+            catch
+            {
+                if (editingSchedule is not null)
+                {
+                    await _scheduleStore.SaveAsync(editingSchedule);
+                    if (editingSchedule.Kind != ScheduleKind.UsbArrival)
+                        await _taskScheduler.RegisterAsync(editingSchedule);
+                    else if (schedule.Kind != ScheduleKind.UsbArrival)
+                    {
+                        try { await _taskScheduler.RemoveAsync(schedule.Id); }
+                        catch (InvalidOperationException) { }
+                    }
+                }
+                else
+                    await _scheduleStore.RemoveAsync(schedule.Id);
+                throw;
+            }
             PreflightText.Text = T($"{schedule.Name} Windows Görev Zamanlayıcı'ya kaydedildi.",
                 $"{schedule.Name} was registered with Windows Task Scheduler.");
             PreflightInfoBar.Visibility = Visibility.Visible;
         }
-        catch (Exception ex) when (ex is InvalidOperationException or IOException or UnauthorizedAccessException)
+        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or IOException
+                                   or UnauthorizedAccessException)
         {
-            ValidationText.Text = T("Zamanlanmış görev oluşturulamadı: ", "Could not create scheduled task: ") + ex.Message;
+            ValidationText.Text = editingSchedule is null
+                ? T("Zamanlanmış görev oluşturulamadı: ", "Could not create scheduled task: ") + ex.Message
+                : T("Zamanlanmış görev güncellenemedi: ", "Could not update scheduled task: ") + ex.Message;
             ValidationInfoBar.Visibility = Visibility.Visible;
         }
     }
@@ -1845,19 +2565,78 @@ public sealed partial class MainWindow : Window
 
     private async Task<bool> WaitForNetworkAsync(CopyJob job, CancellationToken cancellationToken)
     {
+        job.Status = CopyJobStatus.WaitingForNetwork;
+        job.RecoveryReason = QueueRecoveryReason.NetworkUnavailable;
+        job.NetworkRetryAttempt++;
+        job.NetworkWaitUntil = DateTimeOffset.UtcNow.AddMinutes(
+            Math.Clamp(_settings.NetworkRetryMinutes, 1, 1440));
+        _networkRetrySignal = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        RetryNetworkButton.Visibility = Visibility.Visible;
+        await SaveQueueStateAsync();
         var progress = new Progress<NetworkWaitProgress>(value =>
         {
+            if (job.Status != CopyJobStatus.WaitingForNetwork)
+                return;
             StatusText.Text = T("Ağ bağlantısı bekleniyor", "Waiting for network");
-            CurrentFileText.Text = T(value.Message, "Network location is unavailable; waiting for it to return.");
+            var unavailable = value.UnavailablePaths is { Count: > 0 }
+                ? string.Join(", ", value.UnavailablePaths)
+                : job.SourcePath;
+            CurrentFileText.Text = T($"Erişilemiyor: {unavailable}", $"Unavailable: {unavailable}");
             RemainingText.Text = T($"Kalan bekleme: {FormatDuration(value.Remaining)}",
                 $"Wait remaining: {FormatDuration(value.Remaining)}");
+            _activeQueueItem?.SetWaitingForNetwork(value.Remaining, value.UnavailablePaths);
+            job.Summary = T(
+                $"Ağ bağlantısı bekleniyor ({job.NetworkRetryAttempt}. deneme).",
+                $"Waiting for the network (attempt {job.NetworkRetryAttempt}).");
         });
-        return await _networkAvailability.WaitForAvailabilityAsync(
-            job.SourcePath,
-            job.DestinationPath,
-            TimeSpan.FromMinutes(Math.Clamp(_settings.NetworkRetryMinutes, 1, 1440)),
-            progress,
-            cancellationToken);
+        try
+        {
+            bool available;
+            try
+            {
+                available = await _networkAvailability.WaitForAvailabilityAsync(
+                    job.SourcePath,
+                    job.DestinationPath,
+                    TimeSpan.FromMinutes(Math.Clamp(_settings.NetworkRetryMinutes, 1, 1440)),
+                    progress,
+                    cancellationToken,
+                    WaitForNetworkPollAsync);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                return false;
+            }
+            if (available)
+            {
+                job.Status = CopyJobStatus.Running;
+                job.RecoveryReason = QueueRecoveryReason.None;
+                job.NetworkWaitUntil = null;
+                _activeQueueItem?.SetRunning(null,
+                    T("Ağ bağlantısı geri geldi; transfer sürdürülüyor.",
+                        "The network connection returned; resuming the transfer."));
+                await SaveQueueStateAsync();
+            }
+            return available;
+        }
+        finally
+        {
+            _networkRetrySignal = null;
+            RetryNetworkButton.Visibility = Visibility.Collapsed;
+        }
+    }
+
+    private async Task WaitForNetworkPollAsync(TimeSpan delay, CancellationToken cancellationToken)
+    {
+        var signal = _networkRetrySignal ??= new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var delayTask = Task.Delay(delay, cancellationToken);
+        var completed = await Task.WhenAny(delayTask, signal.Task);
+        if (completed == delayTask)
+            await delayTask;
+        if (ReferenceEquals(_networkRetrySignal, signal))
+            _networkRetrySignal = new TaskCompletionSource(
+                TaskCreationOptions.RunContinuationsAsynchronously);
     }
 
     private async void FavoriteButton_Click(object sender, RoutedEventArgs e)
@@ -2064,6 +2843,7 @@ public sealed partial class MainWindow : Window
             CopyJobStatus.CompletedWithErrors => T("İşlem hatalarla birlikte tamamlandı", "Operation completed with errors"),
             CopyJobStatus.Cancelled => T("Transfer iptal edildi", "Transfer cancelled"),
             CopyJobStatus.Paused => T("Transfer duraklatıldı", "Transfer paused"),
+            CopyJobStatus.WaitingForNetwork => T("Ağ bağlantısı bekleniyor", "Waiting for network"),
             _ => T("Transfer başarısız", "Transfer failed")
         };
         CurrentFileText.Text = LocalizeSummary(job.Summary);
@@ -2087,18 +2867,45 @@ public sealed partial class MainWindow : Window
 
     private async Task LoadQueueStateAsync()
     {
-        var recoveredJobs = await _queueStateStore.LoadAsync();
+        var loadResult = await _queueStateStore.LoadWithMetadataAsync();
+        var recoveredJobs = loadResult.Jobs;
         var recoveredCount = 0;
         foreach (var job in recoveredJobs)
         {
-            if (!Directory.Exists(job.SourcePath))
+            var networkJob = IsNetworkJob(job);
+            if (!networkJob && !Directory.Exists(job.SourcePath))
                 continue;
             try
             {
-                var preflight = await _preflightAnalyzer.AnalyzeAsync(
-                    job.SourcePath, job.DestinationPath, job.Options);
+                CopyPreflightResult preflight;
+                try
+                {
+                    preflight = await _preflightAnalyzer.AnalyzeAsync(
+                        job.SourcePath, job.DestinationPath, job.Options);
+                }
+                catch (Exception ex) when (networkJob
+                                           && ex is IOException or UnauthorizedAccessException)
+                {
+                    preflight = new CopyPreflightResult(
+                        job.EstimatedFileCount,
+                        0,
+                        job.EstimatedTotalBytes,
+                        0,
+                        null,
+                        true,
+                        [T("Ağ konumu yeniden bağlanmayı bekliyor.",
+                            "The network location is waiting to reconnect.")]);
+                }
                 job.EstimatedTotalBytes = preflight.TotalBytes;
                 job.EstimatedFileCount = preflight.FileCount;
+                if (job.RecoveryReason == QueueRecoveryReason.NetworkUnavailable)
+                    job.Summary = T(
+                        "Ağ bekleme durumundaki transfer duraklatılmış olarak kurtarıldı.",
+                        "The transfer that was waiting for the network was recovered as paused.");
+                else if (job.RecoveryReason == QueueRecoveryReason.UnexpectedShutdown)
+                    job.Summary = T(
+                        "Beklenmedik kapanıştan sonra yeniden başlatılabilir transfer kurtarıldı.",
+                        "The restartable transfer was recovered after an unexpected shutdown.");
                 var item = new QueueItemViewModel(job, preflight, LocalizationService.IsEnglish(_language));
                 if (job.Status == CopyJobStatus.Paused)
                     item.SetPaused();
@@ -2117,8 +2924,13 @@ public sealed partial class MainWindow : Window
         }
         if (recoveredCount > 0)
         {
+            var source = loadResult.UsedBackup
+                ? T(" Son geçerli yedek checkpoint kullanıldı.", " The last valid backup checkpoint was used.")
+                : loadResult.MigratedLegacyFormat
+                    ? T(" Eski kuyruk biçimi güvenle taşındı.", " The legacy queue format was migrated safely.")
+                    : string.Empty;
             PreflightText.Text = T($"Önceki oturumdan {recoveredCount:N0} kuyruk işi kurtarıldı.",
-                $"Recovered {recoveredCount:N0} queue jobs from the previous session.");
+                $"Recovered {recoveredCount:N0} queue jobs from the previous session.") + source;
             PreflightInfoBar.Visibility = Visibility.Visible;
             UpdateQueueState();
         }
@@ -2164,6 +2976,7 @@ public sealed partial class MainWindow : Window
         CopyJobStatus.Ready => T("Hazır", "Ready"),
         CopyJobStatus.Running => T("Kopyalanıyor", "Copying"),
         CopyJobStatus.Paused => T("Duraklatıldı", "Paused"),
+        CopyJobStatus.WaitingForNetwork => T("Ağ bekleniyor", "Waiting for network"),
         CopyJobStatus.Completed => T("Tamamlandı", "Completed"),
         CopyJobStatus.CompletedWithWarnings => T("Uyarılarla tamamlandı", "Completed with warnings"),
         CopyJobStatus.CompletedWithErrors => T("Hatalarla tamamlandı", "Completed with errors"),
@@ -2189,6 +3002,20 @@ public sealed partial class MainWindow : Window
         FailedItemsListView.SelectedItems.Clear();
         RetrySelectedFailuresButton.IsEnabled = false;
         OpenFailureLogButton.IsEnabled = !string.IsNullOrWhiteSpace(job.LogPath) && File.Exists(job.LogPath);
+    }
+
+    private async Task SaveProgressCheckpointAsync()
+    {
+        if (Interlocked.Exchange(ref _queueCheckpointInFlight, 1) != 0)
+            return;
+        try
+        {
+            await SaveQueueStateAsync();
+        }
+        finally
+        {
+            Volatile.Write(ref _queueCheckpointInFlight, 0);
+        }
     }
 
     private void FailedItemsListView_SelectionChanged(object sender, SelectionChangedEventArgs e) =>

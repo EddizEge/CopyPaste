@@ -79,6 +79,20 @@ public sealed class QueueItemViewModel : INotifyPropertyChanged
             "Restartable Robocopy mode will continue when resumed.");
     }
 
+    public void SetWaitingForNetwork(TimeSpan remaining, IReadOnlyList<string>? unavailablePaths = null)
+    {
+        if (Job.Status != CopyJobStatus.WaitingForNetwork)
+            return;
+        Job.Status = CopyJobStatus.WaitingForNetwork;
+        StatusLabel = T("Ağ bekleniyor", "Waiting for network");
+        var paths = unavailablePaths is { Count: > 0 }
+            ? string.Join(", ", unavailablePaths)
+            : Paths;
+        Detail = T(
+            $"Erişilemiyor: {paths} • kalan bekleme {FormatDuration(remaining)}",
+            $"Unavailable: {paths} • {FormatDuration(remaining)} remaining");
+    }
+
     public void ResetForRetry()
     {
         Job.Status = CopyJobStatus.Ready;
@@ -116,6 +130,7 @@ public sealed class QueueItemViewModel : INotifyPropertyChanged
             CopyJobStatus.Ready => T("Bekliyor", "Waiting"),
             CopyJobStatus.Running => T("Kopyalanıyor", "Copying"),
             CopyJobStatus.Paused => T("Duraklatıldı", "Paused"),
+            CopyJobStatus.WaitingForNetwork => T("Ağ bekleniyor", "Waiting for network"),
             CopyJobStatus.Completed => T("Tamamlandı", "Completed"),
             CopyJobStatus.CompletedWithWarnings => T("Uyarılarla tamamlandı", "Completed with warnings"),
             CopyJobStatus.CompletedWithErrors => T("Hatalarla tamamlandı", "Completed with errors"),
@@ -187,4 +202,8 @@ public sealed class QueueItemViewModel : INotifyPropertyChanged
         $"{Job.Profile.Name} • {OptionsLabel(Job.Options)} • {JobPolicyLabel()}";
 
     private string T(string turkish, string english) => _english ? english : turkish;
+
+    private static string FormatDuration(TimeSpan value) => value.TotalHours >= 1
+        ? $"{(int)value.TotalHours:00}:{value.Minutes:00}:{value.Seconds:00}"
+        : $"{value.Minutes:00}:{value.Seconds:00}";
 }

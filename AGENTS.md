@@ -92,12 +92,13 @@ both languages and the catalog has regression coverage for ordering, duplicate v
 
 Use a `vX.Y.Z` tag only after the Release build and tests pass. Tagged GitHub Actions must continue to produce the Setup EXE, portable ZIP, `SHA256SUMS.txt`, and the signed MSIX only when signing secrets are configured. Never claim artifacts are signed when no certificate was used.
 
-`v1.6.0` is a one-time, product-owner-approved unsigned exception dated July 23,
-2026: publish only the Setup EXE, portable ZIP, and `SHA256SUMS.txt`, prominently
-identify Setup/ZIP as Authenticode-unsigned, and do not publish an unsigned MSIX.
-The workflow may allow this only when the tag is exactly `v1.6.0` and the temporary
-repository variable `ALLOW_UNSIGNED_RELEASE` is exactly `true`; remove the variable
-after the release completes. This exception does not authorize any later release.
+`v1.6.0` and `v1.7.0` are product-owner-approved unsigned exceptions dated July 23,
+2026: for either version publish only the Setup EXE, portable ZIP, and
+`SHA256SUMS.txt`, prominently identify Setup/ZIP as Authenticode-unsigned, and do
+not publish an unsigned MSIX. The workflow may allow this only when the tag is
+exactly `v1.6.0` or `v1.7.0` and the temporary repository variable
+`ALLOW_UNSIGNED_RELEASE` is exactly `true`; remove the variable after the release
+completes. These exceptions do not authorize any later release.
 
 ## Definition of done
 

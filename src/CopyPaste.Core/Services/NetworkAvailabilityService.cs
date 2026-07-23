@@ -1,6 +1,10 @@
 namespace CopyPaste.Core.Services;
 
-public sealed record NetworkWaitProgress(TimeSpan Elapsed, TimeSpan Remaining, string Message);
+public sealed record NetworkWaitProgress(
+    TimeSpan Elapsed,
+    TimeSpan Remaining,
+    string Message,
+    IReadOnlyList<string>? UnavailablePaths = null);
 
 public sealed class NetworkAvailabilityService
 {
@@ -24,20 +28,38 @@ public sealed class NetworkAvailabilityService
         string destinationPath,
         TimeSpan maximumWait,
         IProgress<NetworkWaitProgress>? progress = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        Func<TimeSpan, CancellationToken, Task>? waitAsync = null,
+        Func<string, bool>? sourceAvailable = null,
+        Func<string, bool>? destinationAvailable = null,
+        Func<DateTimeOffset>? utcNow = null)
     {
         if (!IsNetworkPath(sourcePath) && !IsNetworkPath(destinationPath))
             return true;
-        var started = DateTimeOffset.UtcNow;
-        while (DateTimeOffset.UtcNow - started <= maximumWait)
+        sourceAvailable ??= Directory.Exists;
+        destinationAvailable ??= IsDestinationReachable;
+        utcNow ??= static () => DateTimeOffset.UtcNow;
+        var started = utcNow();
+        while (utcNow() - started <= maximumWait)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            if (Directory.Exists(sourcePath) && IsDestinationReachable(destinationPath))
+            var isSourceAvailable = sourceAvailable(sourcePath);
+            var isDestinationAvailable = destinationAvailable(destinationPath);
+            if (isSourceAvailable && isDestinationAvailable)
                 return true;
-            var elapsed = DateTimeOffset.UtcNow - started;
-            progress?.Report(new(elapsed, maximumWait - elapsed,
-                "Ağ konumu kullanılamıyor; bağlantının geri gelmesi bekleniyor."));
-            await Task.Delay(TimeSpan.FromSeconds(5), cancellationToken).ConfigureAwait(false);
+            var elapsed = utcNow() - started;
+            var unavailablePaths = new List<string>();
+            if (!isSourceAvailable)
+                unavailablePaths.Add(sourcePath);
+            if (!isDestinationAvailable)
+                unavailablePaths.Add(destinationPath);
+            progress?.Report(new(elapsed, TimeSpan.FromTicks(Math.Max(0, (maximumWait - elapsed).Ticks)),
+                "Ağ konumu kullanılamıyor; bağlantının geri gelmesi bekleniyor.", unavailablePaths));
+            var delay = TimeSpan.FromSeconds(5);
+            await (waitAsync is null
+                    ? Task.Delay(delay, cancellationToken)
+                    : waitAsync(delay, cancellationToken))
+                .ConfigureAwait(false);
         }
         return false;
     }

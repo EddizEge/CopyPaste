@@ -1,15 +1,24 @@
 #ifndef AppVersion
-  #define AppVersion "1.6.0"
+  #define AppVersion "1.7.0"
 #endif
 #ifndef SourceDir
-  #define SourceDir "..\artifacts\CopyPaste-1.6.0-win-x64"
+  #define SourceDir "..\artifacts\CopyPaste-1.7.0-win-x64"
 #endif
 #ifndef OutputDir
   #define OutputDir "..\artifacts"
 #endif
+#ifndef AppId
+  #define AppId "{{6A8D54D7-71C7-4E75-B5F0-6EB630E81452}"
+#endif
+#ifndef Compression
+  #define Compression "lzma2/ultra64"
+#endif
+#ifndef SolidCompression
+  #define SolidCompression "yes"
+#endif
 
 [Setup]
-AppId={{6A8D54D7-71C7-4E75-B5F0-6EB630E81452}
+AppId={#AppId}
 AppName=CopyPaste
 AppVersion={#AppVersion}
 AppVerName=CopyPaste {#AppVersion}
@@ -28,8 +37,8 @@ ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 OutputDir={#OutputDir}
 OutputBaseFilename=CopyPaste-{#AppVersion}-Setup
-Compression=lzma2/ultra64
-SolidCompression=yes
+Compression={#Compression}
+SolidCompression={#SolidCompression}
 WizardStyle=modern
 CloseApplications=yes
 CloseApplicationsFilter=CopyPaste.App.exe

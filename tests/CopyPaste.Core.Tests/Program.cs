@@ -2,6 +2,7 @@ using CopyPaste.Core.Models;
 using CopyPaste.Core.Services;
 using System.Net;
 using System.Text;
+using System.Text.Json;
 using System.Security.Cryptography;
 
 var failures = new List<string>();
@@ -15,7 +16,7 @@ Assert(RobocopyRunner.CreateResult(16).Status == CopyJobStatus.Failed,
     "Exit 16 ciddi hata olarak başarısız olmalı");
 Assert(!new RobocopyResult(-1, CopyJobStatus.Cancelled, "iptal").IsSuccessful,
     "İptal sonucu başarılı sayılmamalı");
-Assert(ReleaseNotesCatalog.All is [{ Version: "1.6.0", IsPreview: false }, ..]
+Assert(ReleaseNotesCatalog.All is [{ Version: "1.7.0", IsPreview: false }, { Version: "1.6.0", IsPreview: false }, ..]
        && ReleaseNotesCatalog.All.Select(note => note.Version).Distinct(StringComparer.OrdinalIgnoreCase).Count()
           == ReleaseNotesCatalog.All.Count
        && ReleaseNotesCatalog.All.All(note => note.TurkishChanges.Count > 0
@@ -286,6 +287,47 @@ try
     Assert(!rejectedUpdate.Success && rejectedUpdate.Error?.Contains("SHA-256") == true,
         "Hash değeri uyuşmayan güncelleme reddedilmeli");
 
+    var updateRecoveryRoot = Path.Combine(storeDirectory, "update-recovery");
+    var installedAppDirectory = Path.Combine(storeDirectory, "installed-app");
+    Directory.CreateDirectory(installedAppDirectory);
+    var installedExecutable = Path.Combine(installedAppDirectory, "CopyPaste.App.exe");
+    var installedLibrary = Path.Combine(installedAppDirectory, "CopyPaste.Core.dll");
+    await File.WriteAllTextAsync(installedExecutable, "old-executable");
+    await File.WriteAllTextAsync(installedLibrary, "old-library");
+    var verifiedInstaller = Path.Combine(storeDirectory, "CopyPaste-1.7.0-Setup.exe");
+    await File.WriteAllTextAsync(verifiedInstaller, "verified-installer");
+    var updateRecoveryService = new UpdateRecoveryService(
+        updateRecoveryRoot, installedAppDirectory);
+    var recoveryPreparation = await updateRecoveryService.PrepareAsync(
+        installedAppDirectory, verifiedInstaller, "1.6.0", "1.7.0");
+    Assert(recoveryPreparation.Success
+           && recoveryPreparation.State is { Status: UpdateRecoveryStatus.Prepared }
+           && File.Exists(Path.Combine(
+               recoveryPreparation.State.BackupDirectory, "CopyPaste.App.exe")),
+        "Güncelleme öncesinde standart kurulum için yerel geri dönüş yedeği hazırlanmalı");
+    await updateRecoveryService.SetInstallTimingAsync(UpdateInstallTiming.OnExit);
+    Assert((await updateRecoveryService.LoadAsync())?.InstallTiming == UpdateInstallTiming.OnExit,
+        "Güncellemenin yeniden başlatma zamanı uygulama oturumları arasında korunmalı");
+    var backedUpLibrary = Path.Combine(
+        recoveryPreparation.State!.BackupDirectory, "CopyPaste.Core.dll");
+    await File.WriteAllTextAsync(backedUpLibrary, "tampered-library");
+    Assert(!await updateRecoveryService.RestoreAsync(),
+        "Bütünlüğü bozulan geri dönüş yedeği uygulanmamalı");
+    await File.WriteAllTextAsync(backedUpLibrary, "old-library");
+    await updateRecoveryService.MarkInstallerLaunchedAsync();
+    await updateRecoveryService.BeginHealthCheckAsync();
+    await File.WriteAllTextAsync(installedExecutable, "new-broken-executable");
+    await File.WriteAllTextAsync(installedLibrary, "new-broken-library");
+    Assert(await updateRecoveryService.RestoreAsync()
+           && await File.ReadAllTextAsync(installedExecutable) == "old-executable"
+           && await File.ReadAllTextAsync(installedLibrary) == "old-library"
+           && (await updateRecoveryService.LoadAsync())?.Status == UpdateRecoveryStatus.RolledBack,
+        "Başarısız güncelleme doğrulanmış yerel yedekten geri yüklenebilmeli");
+    var unsafeRecoveryPreparation = await updateRecoveryService.PrepareAsync(
+        tempSource, verifiedInstaller, "1.6.0", "1.7.0");
+    Assert(!unsafeRecoveryPreparation.Success,
+        "Geri dönüş hazırlığı izin verilen kurulum klasörünün dışına yazmamalı");
+
     var recoverableJob = new CopyJob
     {
         SourcePath = tempSource,
@@ -293,17 +335,56 @@ try
         Profile = CopyProfiles.All[0],
         BandwidthLimitMbps = 64,
         CompletionAction = CompletionAction.Sleep,
-        Status = CopyJobStatus.Running
+        Status = CopyJobStatus.Running,
+        LastKnownBytesTransferred = 4096,
+        LastKnownCompletedFiles = 2
     };
     var queueStateStore = new QueueStateStore(storeDirectory);
     await queueStateStore.SaveAsync([recoverableJob]);
-    var recoveredQueue = await queueStateStore.LoadAsync();
-    Assert(recoveredQueue.Count == 1
-           && recoveredQueue[0].Status == CopyJobStatus.Paused
-           && recoveredQueue[0].BandwidthLimitMbps == 64
-           && recoveredQueue[0].CompletionAction == CompletionAction.Sleep
-           && recoveredQueue[0].Summary?.Contains("kurtarıldı") == true,
+    var queueLoad = await queueStateStore.LoadWithMetadataAsync();
+    Assert(queueLoad.Jobs.Count == 1
+           && queueLoad.Jobs[0].Status == CopyJobStatus.Paused
+           && queueLoad.Jobs[0].BandwidthLimitMbps == 64
+           && queueLoad.Jobs[0].CompletionAction == CompletionAction.Sleep
+           && queueLoad.Jobs[0].LastKnownBytesTransferred == 4096
+           && queueLoad.Jobs[0].LastKnownCompletedFiles == 2
+           && queueLoad.Jobs[0].RecoveryReason == QueueRecoveryReason.UnexpectedShutdown
+           && queueLoad.Jobs[0].Summary?.Contains("kurtarıldı") == true,
         "Çökme sırasında çalışan kuyruk işi duraklatılmış olarak kurtarılmalı");
+    recoverableJob.LastKnownBytesTransferred = 8192;
+    await queueStateStore.SaveAsync([recoverableJob]);
+    await File.WriteAllTextAsync(Path.Combine(storeDirectory, "queue.json"), "{bozuk-json");
+    var backupQueueLoad = await queueStateStore.LoadWithMetadataAsync();
+    Assert(backupQueueLoad.UsedBackup
+           && backupQueueLoad.Jobs is [{ Status: CopyJobStatus.Paused }]
+           && backupQueueLoad.Jobs[0].LastKnownBytesTransferred == 4096,
+        "Bozuk birincil checkpoint son geçerli atomik yedekten kurtarılmalı");
+    Assert(!(await queueStateStore.LoadWithMetadataAsync()).UsedBackup,
+        "Yedekten kurtarılan checkpoint birincil kaydı kendiliğinden onarmalı");
+    var legacyQueueJson = JsonSerializer.Serialize(new[] { recoverableJob });
+    await File.WriteAllTextAsync(Path.Combine(storeDirectory, "queue.json"), legacyQueueJson);
+    var legacyQueueLoad = await queueStateStore.LoadWithMetadataAsync();
+    Assert(legacyQueueLoad.MigratedLegacyFormat
+           && legacyQueueLoad.Jobs is [{ Status: CopyJobStatus.Paused }],
+        "1.6 ve önceki düz liste kuyruk kayıtları geriye uyumlu biçimde yüklenmeli");
+    var waitingNetworkJob = new CopyJob
+    {
+        SourcePath = @"\\sunucu\arsiv",
+        DestinationPath = tempDestination,
+        Profile = CopyProfiles.All[0],
+        Status = CopyJobStatus.WaitingForNetwork,
+        NetworkRetryAttempt = 2,
+        NetworkWaitUntil = DateTimeOffset.UtcNow.AddMinutes(5)
+    };
+    await queueStateStore.SaveAsync([waitingNetworkJob]);
+    var recoveredNetworkQueue = await queueStateStore.LoadAsync();
+    Assert(recoveredNetworkQueue is
+        [{
+            Status: CopyJobStatus.Paused,
+            RecoveryReason: QueueRecoveryReason.NetworkUnavailable,
+            NetworkRetryAttempt: 2
+        }],
+        "Ağ bekleme checkpoint'i yeniden başlatmada güvenli duraklatılmış işe dönüşmeli");
 
     var scheduleStore = new ScheduleStore(storeDirectory);
     var scheduledTransfer = new ScheduledTransfer
@@ -312,6 +393,7 @@ try
         TimeOfDay = "02:30",
         Kind = ScheduleKind.Weekly,
         DayOfWeek = DayOfWeek.Saturday,
+        RequireAcPower = true,
         Job = new CopyJob
         {
             SourcePath = tempSource,
@@ -327,10 +409,85 @@ try
             TimeOfDay: "02:30",
             Kind: ScheduleKind.Weekly,
             DayOfWeek: DayOfWeek.Saturday,
+            RequireAcPower: true,
             Job.BandwidthLimitMbps: 32,
             Job.CompletionAction: CompletionAction.ShutDown
         },
         "Zamanlanmış transfer tüm iş seçenekleriyle saklanmalı");
+    var taskArguments = TaskSchedulerCommandBuilder.BuildCreate(
+        scheduledTransfer, @"C:\Program Files\CopyPaste\CopyPaste.App.exe");
+    var scheduledTaskName = $@"CopyPaste\{scheduledTransfer.Id:D}";
+    Assert(taskArguments.Contains("/Create")
+           && taskArguments.SkipWhile(argument => argument != "/TN").Take(2)
+               .SequenceEqual(["/TN", scheduledTaskName])
+           && taskArguments.SkipWhile(argument => argument != "/D").Take(2)
+               .SequenceEqual(["/D", "SAT"])
+           && taskArguments.SkipWhile(argument => argument != "/ST").Take(2)
+               .SequenceEqual(["/ST", "02:30"])
+           && taskArguments.Any(argument =>
+               argument == $"\"C:\\Program Files\\CopyPaste\\CopyPaste.App.exe\" --schedule {scheduledTransfer.Id:D}"),
+        "Haftalık Windows görevi güvenli görev adı, saat ve alıntılanmış uygulama yoluyla oluşturulmalı");
+    Assert(TaskSchedulerCommandBuilder.BuildSetEnabled(scheduledTransfer.Id, false)
+               .SequenceEqual(["/Change", "/TN", scheduledTaskName, "/DISABLE"])
+           && TaskSchedulerCommandBuilder.BuildSetEnabled(scheduledTransfer.Id, true)
+               .SequenceEqual(["/Change", "/TN", scheduledTaskName, "/ENABLE"])
+           && TaskSchedulerCommandBuilder.BuildRunNow(scheduledTransfer.Id)
+               .SequenceEqual(["/Run", "/TN", scheduledTaskName])
+           && TaskSchedulerCommandBuilder.BuildDelete(scheduledTransfer.Id)
+               .SequenceEqual(["/Delete", "/TN", scheduledTaskName, "/F"]),
+        "Zamanlanmış görev yönetim komutları yalnızca uygulamanın GUID tabanlı görev adını kullanmalı");
+    var usbSchedule = scheduledTransfer with
+    {
+        Kind = ScheduleKind.UsbArrival,
+        UsbVolumeId = "A1B2C3D4",
+        UsbVolumeLabel = "YEDEK"
+    };
+    Assert(UsbScheduleMatcher.Matches(
+               usbSchedule, new UsbDriveIdentity(@"G:\", "a1b2c3d4", "YEDEK"))
+           && !UsbScheduleMatcher.Matches(
+               usbSchedule, new UsbDriveIdentity(@"H:\", "FFFFFFFF", "YEDEK")),
+        "USB zamanlaması sürücü harfinden bağımsız, kalıcı birim kimliğiyle eşleşmeli");
+    var simulatedUsbDrive = new UsbDriveIdentity(@"G:\", "A1B2C3D4", "YEDEK");
+    Assert(UsbDriveArrivalDetector.FindArrivals(
+               [simulatedUsbDrive.VolumeId], [simulatedUsbDrive with { RootPath = @"H:\" }]).Count == 0,
+        "Bağlı USB sürücüsünün harfi değişse bile ikinci bir varış olayı üretilmemeli");
+    Assert(UsbDriveArrivalDetector.FindArrivals([simulatedUsbDrive.VolumeId], []).Count == 0,
+        "USB sürücüsünün ayrılması varış olayı üretmemeli");
+    var simulatedUsbRearrival = UsbDriveArrivalDetector.FindArrivals(
+        [],
+        [
+            simulatedUsbDrive with { RootPath = @"H:\" },
+            simulatedUsbDrive with { RootPath = @"I:\" }
+        ]);
+    Assert(simulatedUsbRearrival is [{ RootPath: @"H:\", VolumeId: "A1B2C3D4" }],
+        "Ayrıldıktan sonra farklı harfle yeniden bağlanan USB sürücüsü yalnızca bir kez algılanmalı");
+    Assert(UsbScheduleMatcher.Evaluate(usbSchedule, simulatedUsbDrive, false)
+               == UsbScheduleTriggerDecision.AcPowerRequired
+           && UsbScheduleMatcher.Evaluate(usbSchedule, simulatedUsbDrive, true)
+               == UsbScheduleTriggerDecision.Ready
+           && UsbScheduleMatcher.Evaluate(
+               usbSchedule, new UsbDriveIdentity(@"G:\", "FFFFFFFF", "YEDEK"), true)
+               == UsbScheduleTriggerDecision.NotMatched,
+        "USB tetikleyicisi kalıcı kimlik ve AC güç koşulunu birlikte değerlendirmeli");
+    await scheduleStore.SaveAsync(usbSchedule);
+    Assert((await scheduleStore.FindAsync(usbSchedule.Id)) is
+        {
+            Kind: ScheduleKind.UsbArrival,
+            UsbVolumeId: "A1B2C3D4",
+            RequireAcPower: true
+        },
+        "USB birim kimliği ve AC güç koşulu zamanlama kaydında korunmalı");
+    await scheduleStore.SaveAsync(scheduledTransfer);
+    AssertThrows<ArgumentException>(
+        () => TaskSchedulerCommandBuilder.BuildCreate(
+            usbSchedule, @"C:\Program Files\CopyPaste\CopyPaste.App.exe"),
+        "USB varış görevleri yanlışlıkla günlük Windows görevine dönüştürülmemeli");
+    var pausedSchedule = scheduledTransfer with { Enabled = false };
+    await scheduleStore.SaveAsync(pausedSchedule);
+    Assert(await scheduleStore.FindAsync(pausedSchedule.Id) is null
+           && (await scheduleStore.LoadAsync()).Single(schedule => schedule.Id == pausedSchedule.Id).Enabled == false,
+        "Duraklatılmış görev saklanmalı ancak zamanlanmış başlatma için bulunmamalı");
+    await scheduleStore.SaveAsync(scheduledTransfer);
     await scheduleStore.RemoveAsync(scheduledTransfer.Id);
     Assert(await scheduleStore.FindAsync(scheduledTransfer.Id) is null,
         "Zamanlanmış transfer kaldırılabilmeli");
@@ -341,6 +498,82 @@ try
     Assert(await new NetworkAvailabilityService().WaitForAvailabilityAsync(
         tempSource, tempDestination, TimeSpan.FromMilliseconds(10)),
         "Yerel transferler ağ beklemesine girmemeli");
+    var networkProgress = new List<NetworkWaitProgress>();
+    var unavailableNetwork = await new NetworkAvailabilityService().WaitForAvailabilityAsync(
+        @"\\copy-paste-test-invalid\arsiv",
+        tempDestination,
+        TimeSpan.FromMilliseconds(2),
+        new InlineProgress<NetworkWaitProgress>(networkProgress.Add),
+        waitAsync: (_, _) => Task.CompletedTask);
+    Assert(!unavailableNetwork
+           && networkProgress.Count > 0
+           && networkProgress.Any(progress =>
+               progress.UnavailablePaths?.Contains(@"\\copy-paste-test-invalid\arsiv") == true),
+        "Ağ bekleme ilerlemesi erişilemeyen yolu ve süre durumunu bildirmeli");
+    var simulatedNetworkTime = new DateTimeOffset(2026, 7, 23, 12, 0, 0, TimeSpan.Zero);
+    var simulatedSourceChecks = 0;
+    var simulatedWaits = 0;
+    var simulatedNetworkProgress = new List<NetworkWaitProgress>();
+    var restoredNetwork = await new NetworkAvailabilityService().WaitForAvailabilityAsync(
+        @"\\nas-test\kaynak",
+        @"\\nas-test\hedef",
+        TimeSpan.FromSeconds(30),
+        new InlineProgress<NetworkWaitProgress>(simulatedNetworkProgress.Add),
+        waitAsync: (delay, token) =>
+        {
+            token.ThrowIfCancellationRequested();
+            simulatedWaits++;
+            simulatedNetworkTime += delay;
+            return Task.CompletedTask;
+        },
+        sourceAvailable: _ => ++simulatedSourceChecks >= 3,
+        destinationAvailable: _ => true,
+        utcNow: () => simulatedNetworkTime);
+    Assert(restoredNetwork
+           && simulatedSourceChecks == 3
+           && simulatedWaits == 2
+           && simulatedNetworkProgress.Count == 2
+           && simulatedNetworkProgress.All(progress =>
+               progress.UnavailablePaths?.SequenceEqual([@"\\nas-test\kaynak"]) == true),
+        "NAS kaynağı iki yoklamadan sonra geri geldiğinde bekleme akışı transferi sürdürmeli");
+    var simulatedDestinationTime = new DateTimeOffset(2026, 7, 23, 12, 0, 0, TimeSpan.Zero);
+    var simulatedDestinationChecks = 0;
+    var immediateRetryWaits = 0;
+    var restoredDestination = await new NetworkAvailabilityService().WaitForAvailabilityAsync(
+        @"\\nas-test\kaynak",
+        @"\\nas-test\hedef",
+        TimeSpan.FromSeconds(30),
+        waitAsync: (_, token) =>
+        {
+            token.ThrowIfCancellationRequested();
+            immediateRetryWaits++;
+            return Task.CompletedTask;
+        },
+        sourceAvailable: _ => true,
+        destinationAvailable: _ => ++simulatedDestinationChecks >= 2,
+        utcNow: () => simulatedDestinationTime);
+    Assert(restoredDestination && simulatedDestinationChecks == 2 && immediateRetryWaits == 1,
+        "Şimdi yeniden dene sinyali gibi erken uyandırılan NAS hedefi beklemeden tekrar yoklanmalı");
+    var simulatedTimeoutTime = new DateTimeOffset(2026, 7, 23, 12, 0, 0, TimeSpan.Zero);
+    var simulatedTimeoutProgress = new List<NetworkWaitProgress>();
+    var timedOutNetwork = await new NetworkAvailabilityService().WaitForAvailabilityAsync(
+        @"\\nas-test\kaynak",
+        @"\\nas-test\hedef",
+        TimeSpan.FromSeconds(10),
+        new InlineProgress<NetworkWaitProgress>(simulatedTimeoutProgress.Add),
+        waitAsync: (delay, token) =>
+        {
+            token.ThrowIfCancellationRequested();
+            simulatedTimeoutTime += delay;
+            return Task.CompletedTask;
+        },
+        sourceAvailable: _ => false,
+        destinationAvailable: _ => true,
+        utcNow: () => simulatedTimeoutTime);
+    Assert(!timedOutNetwork
+           && simulatedTimeoutProgress.Count == 3
+           && simulatedTimeoutProgress[^1].Remaining == TimeSpan.Zero,
+        "NAS bağlantısı dönmezse simüle edilen süre sonunda bekleme güvenli biçimde sona ermeli");
 
     var parsedOptions = CopyJobOptionsParser.Parse(
         ExistingFileBehavior.Skip,
@@ -673,6 +906,18 @@ void Assert(bool condition, string message)
 {
     if (!condition)
         failures.Add("BAŞARISIZ: " + message);
+}
+
+void AssertThrows<TException>(Action action, string message) where TException : Exception
+{
+    try
+    {
+        action();
+        failures.Add("BAŞARISIZ: " + message);
+    }
+    catch (TException)
+    {
+    }
 }
 
 sealed class StubHttpMessageHandler(HttpStatusCode statusCode, string content) : HttpMessageHandler

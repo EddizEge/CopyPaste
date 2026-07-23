@@ -1,5 +1,14 @@
 # Değişiklik günlüğü
 
+## 1.7.0
+
+- Zamanlanmış transfer yönetimi genişletildi: kayıtlı görevler düzenlenebilir, duraklatılıp yeniden etkinleştirilebilir, hemen çalıştırılabilir ve silinebilir.
+- Kuyruk kayıtları sürümlü ve atomik checkpoint biçimine taşındı; bozuk ana kayıt son geçerli yedekten kurtarılıyor ve aktif transfer ilerlemesi beş saniyede bir saklanıyor.
+- Kalıcı birim kimliğiyle USB sürücüsü bağlanınca görev başlatma ve yalnızca AC gücünde çalıştırma koşulu eklendi.
+- NAS/ağ bekleme durumu kuyruğa ve checkpoint'e yansıtıldı; erişilemeyen yol, geri sayım, deneme sayısı, “Şimdi yeniden dene” ve beş kontrollü devam denemesi eklendi.
+- Güncelleme indirmesine görsel ilerleme çubuğu; şimdi, transferlerden sonra veya çıkışta kurma seçenekleri; standart kullanıcı kurulumları için yerel yedek, sağlık kontrolü ve geri dönüş akışı eklendi.
+- `v1.7.0` Setup ve portable ZIP paketleri için SignPath başvurusu sonuçlanana kadar açık uyarı ve SHA-256 doğrulamalı geçici Authenticode imzasız yayın istisnası onaylandı; imzasız MSIX yayımlanmayacak.
+
 ## 1.6.0
 
 - “Önizle / karşılaştır” akışı gerçek Robocopy `/L` kuru çalışmasını kullanacak şekilde geliştirildi; yeni, üzerine yazılacak, atlanacak ve hatalı dosya sayıları ile kopyalanacak boyut gösteriliyor.
