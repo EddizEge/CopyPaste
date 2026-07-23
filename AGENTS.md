@@ -68,6 +68,8 @@ Release artifacts are built with:
 - Keep asynchronous work cancellable and report progress without excessive dispatcher traffic.
 - Handle Windows API, notification, registry, Task Scheduler, tray, network, and power-operation failures without crashing the main window.
 - Do not make release tags, push branches, create GitHub releases, or replace the locally installed version unless the user explicitly asks for that action in the current task.
+- Before every release, ask the product owner for explicit confirmation naming that
+  specific version, even if a roadmap entry or an earlier broad approval exists.
 
 ## Versioning and releases
 
@@ -89,6 +91,13 @@ badge. Do not consider a release-note-related change complete unless the in-app 
 both languages and the catalog has regression coverage for ordering, duplicate versions, and missing text.
 
 Use a `vX.Y.Z` tag only after the Release build and tests pass. Tagged GitHub Actions must continue to produce the Setup EXE, portable ZIP, `SHA256SUMS.txt`, and the signed MSIX only when signing secrets are configured. Never claim artifacts are signed when no certificate was used.
+
+`v1.6.0` is a one-time, product-owner-approved unsigned exception dated July 23,
+2026: publish only the Setup EXE, portable ZIP, and `SHA256SUMS.txt`, prominently
+identify Setup/ZIP as Authenticode-unsigned, and do not publish an unsigned MSIX.
+The workflow may allow this only when the tag is exactly `v1.6.0` and the temporary
+repository variable `ALLOW_UNSIGNED_RELEASE` is exactly `true`; remove the variable
+after the release completes. This exception does not authorize any later release.
 
 ## Definition of done
 
@@ -129,6 +138,9 @@ Keep this roadmap available across separate tasks, but re-check the code before 
 
 ### Distribution work still outstanding
 
+- SignPath Foundation open-source sponsorship application submitted on July 23,
+  2026. When approved, integrate trustworthy signing into the first version then
+  under development; do not delay unrelated versions solely to wait for approval.
 - Authenticode certificate and trustworthy signing for production EXE/installer artifacts.
 - Signed MSIX distribution for the native Windows 11 context menu, or another supported modern context-menu deployment path.
 - Final installer/update smoke tests on a clean Windows user profile and a representative managed/company PC.

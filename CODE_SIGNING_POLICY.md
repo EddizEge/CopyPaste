@@ -20,6 +20,10 @@ onaylandıktan sonra üretim sürümleri şu modelle imzalanacaktır:
 - İmzalama yalnızca sürüm testleri başarıyla tamamlandıktan sonra istenir.
 - Her SignPath imzalama isteği signing approver tarafından elle onaylanır.
 - Başka projelere ait üçüncü taraf dosyalar CopyPaste sertifikasıyla imzalanmaz.
+- Ürün sahibinin 23 Temmuz 2026 tarihli sürüm bazlı onayıyla yalnızca `v1.6.0`
+  Setup ve portable ZIP dosyaları geçici olarak Authenticode imzasız yayımlanabilir.
+  Bu dosyalar açıkça imzasız olarak belirtilir, SHA-256 değerleri yayımlanır ve
+  imzasız MSIX dağıtılmaz.
 - İmzalı yayın dosyalarının SHA-256 değerleri GitHub Release içindeki
   `SHA256SUMS.txt` dosyasında yayımlanır.
 - İmza, Windows PowerShell'deki `Get-AuthenticodeSignature` veya Windows SDK
@@ -49,6 +53,10 @@ approval, production releases will use the following model:
 - Signing is requested only after the release tests have passed.
 - Every SignPath signing request is manually approved by the signing approver.
 - Third-party files from other projects are not signed with the CopyPaste certificate.
+- With version-specific approval from the product owner dated July 23, 2026, only
+  the `v1.6.0` Setup and portable ZIP may be published temporarily without an
+  Authenticode signature. They are clearly identified as unsigned, SHA-256 hashes
+  are published, and no unsigned MSIX is distributed.
 - SHA-256 hashes for signed release assets are published in `SHA256SUMS.txt` within
   the GitHub Release.
 - Signatures can be verified with `Get-AuthenticodeSignature` in Windows PowerShell

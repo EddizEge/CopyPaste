@@ -14,6 +14,7 @@
 - Korumalı kaynak seçici çoklu checkbox seçimini destekliyor ve seçilen her klasörü izinleri değiştirmeden ayrı `/ZB` kuyruk işi olarak hazırlıyor.
 - Önizleme tamamlandıktan sonra durum satırının “Karşılaştırılıyor” olarak kalması düzeltildi; gelişmiş seçeneklerin erişilebilir adı seçili dile uyarlanıyor.
 - Proje MIT lisansıyla açık kaynak olarak belgelendi; SignPath Foundation başvurusu için kod imzalama ve gizlilik politikaları eklendi.
+- `v1.6.0` Setup ve portable ZIP paketlerinin SignPath başvurusu sonuçlanana kadar açık uyarı ve SHA-256 doğrulamasıyla geçici olarak Authenticode imzasız yayımlanmasına karar verildi; imzasız MSIX yayımlanmıyor.
 
 ## 1.5.1
 

@@ -132,11 +132,12 @@ Kurumsal sessiz kurulum örneği:
 .\CopyPaste-1.6.0-Setup.exe /LANG=turkish /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /TASKS="explorer"
 ```
 
-İmzalı MSIX paketi `IExplorerCommand` tabanlı modern Windows 11 menüsünü içerir. Üretim
-workflow'u güvenilir kod imzalama yapılandırması olmadan başarısız olur; GitHub Release'a
-imzasız paket eklenmez. Proje, açık kaynak sürümleri için SignPath Foundation sponsorluğuna
-başvurmaktadır. Onay ve entegrasyon tamamlandığında EXE, kurulum ve MSIX SignPath üzerinden
-imzalanacaktır.
+`v1.6.0` Setup EXE ve portable ZIP paketleri, ürün sahibinin bu sürüme özel onayıyla
+SignPath Foundation başvurusu sonuçlanana kadar geçici olarak Authenticode imzasız
+yayımlanır. İndirmeler `SHA256SUMS.txt` ile doğrulanmalıdır; imzasız MSIX yayımlanmaz.
+Bu istisna yalnızca `v1.6.0` için geçerlidir. Sonraki her yayın için ürün sahibinden
+sürüm bazlı açık onay alınır. SignPath onayı ve entegrasyonu tamamlandığında EXE,
+kurulum ve MSIX ilk uygun sürümden başlayarak güvenilir biçimde imzalanacaktır.
 
 ## Code signing policy
 
@@ -157,6 +158,8 @@ değerini ilk Release oluşturulmadan önce değiştirin.
 - `.github/workflows/pages.yml`, ana dal GitHub'a gönderildiğinde siteyi GitHub Pages'a yayınlar.
 - `.github/workflows/release.yml`, `v*` biçimindeki sürüm etiketi gönderildiğinde testleri çalıştırır,
   kurulum EXE'si ile taşınabilir paketi üretir ve SHA-256 özetleriyle GitHub Release'a ekler.
+- Geçici imzasız yayın istisnası yalnızca `v1.6.0` ve `ALLOW_UNSIGNED_RELEASE=true`
+  değişkeni birlikteyken çalışır; diğer sürümler güvenilir imzalama olmadan durur.
 - Yeni bir sürüm yayımlamak için proje ve manifest sürümünü artırıp `v1.6.0` benzeri aynı sürüm
   etiketi oluşturun. Uygulama öncelikle `CopyPaste-*-Setup.exe`, bulunamazsa taşınabilir ZIP
   dosyasını indirme hedefi olarak kullanıcıya sunar.

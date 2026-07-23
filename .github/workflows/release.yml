@@ -28,9 +28,15 @@ jobs:
         env:
           WINDOWS_CERTIFICATE_BASE64: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 }}
           WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+          ALLOW_UNSIGNED_RELEASE: ${{ vars.ALLOW_UNSIGNED_RELEASE }}
+          RELEASE_TAG: ${{ github.ref_name }}
         run: |
           if ([string]::IsNullOrWhiteSpace($env:WINDOWS_CERTIFICATE_BASE64)) {
-            throw "WINDOWS_CERTIFICATE_BASE64 is required for a production release."
+            if ($env:ALLOW_UNSIGNED_RELEASE -eq "true" -and $env:RELEASE_TAG -eq "v1.6.0") {
+              Write-Warning "Explicit one-time exception: v1.6.0 application files will remain unsigned."
+              exit 0
+            }
+            throw "A trusted signing configuration is required for this release."
           }
           if ([string]::IsNullOrWhiteSpace($env:WINDOWS_CERTIFICATE_PASSWORD)) {
             throw "WINDOWS_CERTIFICATE_PASSWORD is required for a production release."
@@ -59,7 +65,16 @@ jobs:
         env:
           WINDOWS_CERTIFICATE_BASE64: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 }}
           WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+          ALLOW_UNSIGNED_RELEASE: ${{ vars.ALLOW_UNSIGNED_RELEASE }}
+          RELEASE_TAG: ${{ github.ref_name }}
         run: |
+          if ([string]::IsNullOrWhiteSpace($env:WINDOWS_CERTIFICATE_BASE64)) {
+            if ($env:ALLOW_UNSIGNED_RELEASE -eq "true" -and $env:RELEASE_TAG -eq "v1.6.0") {
+              Write-Warning "Explicit one-time exception: v1.6.0 installer will remain unsigned."
+              exit 0
+            }
+            throw "A trusted signing configuration is required for this release."
+          }
           $certificate = Join-Path $env:RUNNER_TEMP "CopyPaste-signing.pfx"
           try {
             [IO.File]::WriteAllBytes($certificate, [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE_BASE64))
@@ -75,7 +90,16 @@ jobs:
         env:
           WINDOWS_CERTIFICATE_BASE64: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 }}
           WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+          ALLOW_UNSIGNED_RELEASE: ${{ vars.ALLOW_UNSIGNED_RELEASE }}
+          RELEASE_TAG: ${{ github.ref_name }}
         run: |
+          if ([string]::IsNullOrWhiteSpace($env:WINDOWS_CERTIFICATE_BASE64)) {
+            if ($env:ALLOW_UNSIGNED_RELEASE -eq "true" -and $env:RELEASE_TAG -eq "v1.6.0") {
+              Write-Warning "Unsigned MSIX packages are not distributable; skipping MSIX for v1.6.0."
+              exit 0
+            }
+            throw "A trusted signing configuration is required for this release."
+          }
           $certificate = Join-Path $env:RUNNER_TEMP "CopyPaste-msix.pfx"
           try {
             [IO.File]::WriteAllBytes($certificate, [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE_BASE64))
@@ -100,4 +124,10 @@ jobs:
           $checksumPath = Join-Path $PWD "artifacts/SHA256SUMS.txt"
           $checksums | Set-Content -LiteralPath $checksumPath -Encoding utf8
           $releaseAssets = @($files.FullName) + $checksumPath
-          gh release create "${{ github.ref_name }}" @releaseAssets --generate-notes --title "CopyPaste ${{ github.ref_name }}"
+          $notesPath = Join-Path $PWD ".github/release-notes/${{ github.ref_name }}.md"
+          if (Test-Path -LiteralPath $notesPath) {
+            gh release create "${{ github.ref_name }}" @releaseAssets --notes-file $notesPath --title "CopyPaste ${{ github.ref_name }}"
+          }
+          else {
+            gh release create "${{ github.ref_name }}" @releaseAssets --generate-notes --title "CopyPaste ${{ github.ref_name }}"
+          }

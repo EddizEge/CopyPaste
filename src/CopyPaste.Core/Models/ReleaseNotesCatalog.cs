@@ -23,7 +23,8 @@ public static class ReleaseNotesCatalog
             "Filtre düzenleyicisi canlı özet ve sıfırlama sunar; önizleme filtre etkisini sayı ve boyutla gösterir.",
             "Korumalı klasör seçici çoklu checkbox seçimiyle her klasör için ayrı güvenli /ZB işi hazırlar.",
             "Önizleme durumları ve gelişmiş seçeneklerin erişilebilir adı seçili dilde doğru gösterilir.",
-            "Proje MIT lisansıyla açık kaynak olarak belgelendi; kod imzalama ve gizlilik politikaları eklendi."
+            "Proje MIT lisansıyla açık kaynak olarak belgelendi; kod imzalama ve gizlilik politikaları eklendi.",
+            "1.6.0 Setup ve portable ZIP paketleri SignPath başvurusu sonuçlanana kadar geçici olarak Authenticode imzasızdır; indirmeler SHA-256 ile doğrulanabilir ve imzasız MSIX yayımlanmaz."
         ],
         [
             "A real Robocopy /L preview plans new, overwritten, skipped, and failed files.",
@@ -37,7 +38,8 @@ public static class ReleaseNotesCatalog
             "The filter editor provides live validation and reset controls, and preview quantifies filter effects.",
             "The protected-folder picker supports multiple checkbox selections and creates a safe /ZB job for each folder.",
             "Preview statuses and the accessible name for advanced options are shown correctly in the selected language.",
-            "The project is documented as open source under the MIT License, with code-signing and privacy policies."
+            "The project is documented as open source under the MIT License, with code-signing and privacy policies.",
+            "The 1.6.0 Setup and portable ZIP are temporarily unsigned with Authenticode while the SignPath application is reviewed; downloads can be verified with SHA-256 and no unsigned MSIX is published."
         ]),
         new("1.5.1", false,
         [
