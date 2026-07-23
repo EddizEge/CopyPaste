@@ -25,6 +25,7 @@ public sealed class CopyJob
     public TransferPerformanceMode RequestedPerformanceMode { get; init; } = TransferPerformanceMode.Automatic;
     public TransferPerformanceMode ActivePerformanceMode { get; set; } = TransferPerformanceMode.Balanced;
     public int BandwidthLimitMbps { get; init; }
+    public CompletionAction CompletionAction { get; init; }
     public bool UseBackupMode { get; init; }
     public CopyJobOptions Options { get; init; } = new();
     public CopyJobStatus Status { get; set; } = CopyJobStatus.Ready;

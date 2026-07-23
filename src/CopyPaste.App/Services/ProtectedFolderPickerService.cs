@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Security.Principal;
+using CopyPaste.Core.Services;
 
 namespace CopyPaste.App.Services;
 
@@ -12,7 +13,7 @@ public static class ProtectedFolderPickerService
         return new WindowsPrincipal(identity).IsInRole(WindowsBuiltInRole.Administrator);
     }
 
-    public static bool LaunchElevatedSession(string? destinationPath)
+    public static bool LaunchElevatedSession(string? destinationPath, string? language = null)
     {
         var resultFile = Path.Combine(Path.GetTempPath(), $"CopyPaste-picker-{Guid.NewGuid():N}.txt");
         try
@@ -27,6 +28,11 @@ public static class ProtectedFolderPickerService
             };
             startInfo.ArgumentList.Add("--protected-session");
             startInfo.ArgumentList.Add(resultFile);
+            if (!string.IsNullOrWhiteSpace(language))
+            {
+                startInfo.ArgumentList.Add("--language");
+                startInfo.ArgumentList.Add(language);
+            }
             if (!string.IsNullOrWhiteSpace(destinationPath))
             {
                 startInfo.ArgumentList.Add("--destination");
@@ -42,7 +48,9 @@ public static class ProtectedFolderPickerService
         }
     }
 
-    public static async Task<string?> PickAsync(CancellationToken cancellationToken = default)
+    public static async Task<IReadOnlyList<string>> PickManyAsync(
+        string? language = null,
+        CancellationToken cancellationToken = default)
     {
         var resultFile = Path.Combine(Path.GetTempPath(), $"CopyPaste-picker-{Guid.NewGuid():N}.txt");
         try
@@ -57,23 +65,37 @@ public static class ProtectedFolderPickerService
             };
             startInfo.ArgumentList.Add("--protected-folder-picker");
             startInfo.ArgumentList.Add(resultFile);
+            if (!string.IsNullOrWhiteSpace(language))
+            {
+                startInfo.ArgumentList.Add("--language");
+                startInfo.ArgumentList.Add(language);
+            }
             using var process = Process.Start(startInfo);
             if (process is null)
-                return null;
+                return [];
             await process.WaitForExitAsync(cancellationToken).ConfigureAwait(false);
-            if (!File.Exists(resultFile))
-                return null;
-            var path = (await File.ReadAllTextAsync(resultFile, cancellationToken).ConfigureAwait(false)).Trim();
-            return Path.IsPathFullyQualified(path) ? path : null;
+            return await ReadResultAsync(resultFile, cancellationToken).ConfigureAwait(false);
         }
         catch (Win32Exception ex) when (ex.NativeErrorCode == 1223)
         {
-            return null;
+            return [];
         }
         finally
         {
             try { File.Delete(resultFile); }
             catch (IOException) { }
         }
+    }
+
+    public static async Task<IReadOnlyList<string>> ReadResultAsync(
+        string resultFile,
+        CancellationToken cancellationToken = default)
+    {
+        if (!File.Exists(resultFile))
+            return [];
+        var content = (await File.ReadAllTextAsync(resultFile, cancellationToken).ConfigureAwait(false)).Trim();
+        if (string.IsNullOrWhiteSpace(content))
+            return [];
+        return ProtectedFolderSelectionSerializer.Parse(content);
     }
 }

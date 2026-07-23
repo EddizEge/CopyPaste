@@ -15,13 +15,19 @@ public sealed class FailedItemRetryService
         CopyJob originalJob,
         IProgress<RobocopyProgress>? progress = null,
         CancellationToken cancellationToken = default,
-        Action<string>? logLine = null)
+        Action<string>? logLine = null,
+        IReadOnlyCollection<CopyFailure>? selectedFailures = null)
     {
-        var retryJobs = CreateRetryJobs(originalJob);
+        var selection = SelectFailures(originalJob, selectedFailures);
+        var retryJobs = CreateRetryJobs(originalJob, selection);
         if (retryJobs.Count == 0)
-            return new(16, CopyJobStatus.Failed, "Yeniden denenecek güvenli bir dosya yolu bulunamadı.");
+            return new(16, CopyJobStatus.Failed,
+                "Yeniden denenecek güvenli bir dosya yolu bulunamadı; özgün hata listesi korundu.",
+                originalJob.Failures, originalJob.Failures.Count);
 
-        var remainingFailures = new List<CopyFailure>();
+        var remainingFailures = originalJob.Failures
+            .Where(failure => !selection.Contains(failure))
+            .ToList();
         for (var index = 0; index < retryJobs.Count; index++)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -48,17 +54,19 @@ public sealed class FailedItemRetryService
             ? new(1, CopyJobStatus.Completed,
                 $"Daha önce kopyalanamayan {retryJobs.Count:N0} öğenin tamamı başarıyla kopyalandı.")
             : new(8, CopyJobStatus.CompletedWithErrors,
-                $"Hatalı öğeler yeniden denendi; {remainingFailures.Count:N0} öğe hâlâ kopyalanamadı.",
+                $"Seçilen hatalı öğeler yeniden denendi; toplam {remainingFailures.Count:N0} öğe hâlâ kopyalanamadı.",
                 remainingFailures, remainingFailures.Count);
     }
 
-    public static IReadOnlyList<CopyJob> CreateRetryJobs(CopyJob originalJob)
+    public static IReadOnlyList<CopyJob> CreateRetryJobs(
+        CopyJob originalJob,
+        IReadOnlyCollection<CopyFailure>? selectedFailures = null)
     {
         var sourceRoot = Path.GetFullPath(originalJob.SourcePath).TrimEnd(Path.DirectorySeparatorChar);
         var destinationRoot = Path.GetFullPath(originalJob.DestinationPath).TrimEnd(Path.DirectorySeparatorChar);
         var jobs = new List<CopyJob>();
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var failure in originalJob.Failures)
+        foreach (var failure in SelectFailures(originalJob, selectedFailures))
         {
             string failedPath;
             try { failedPath = Path.GetFullPath(failure.Path.Trim().Trim('"')); }
@@ -83,6 +91,7 @@ public sealed class FailedItemRetryService
                     RequestedPerformanceMode = originalJob.RequestedPerformanceMode,
                     ActivePerformanceMode = originalJob.ActivePerformanceMode,
                     BandwidthLimitMbps = originalJob.BandwidthLimitMbps,
+                    CompletionAction = originalJob.CompletionAction,
                     UseBackupMode = originalJob.UseBackupMode,
                     Options = originalJob.Options with { FilePatterns = ["*"] }
                 });
@@ -98,6 +107,7 @@ public sealed class FailedItemRetryService
                 RequestedPerformanceMode = originalJob.RequestedPerformanceMode,
                 ActivePerformanceMode = originalJob.ActivePerformanceMode,
                 BandwidthLimitMbps = originalJob.BandwidthLimitMbps,
+                CompletionAction = originalJob.CompletionAction,
                 UseBackupMode = originalJob.UseBackupMode,
                 Options = originalJob.Options with
                 {
@@ -107,6 +117,19 @@ public sealed class FailedItemRetryService
             });
         }
         return jobs;
+    }
+
+    private static IReadOnlyCollection<CopyFailure> SelectFailures(
+        CopyJob originalJob,
+        IReadOnlyCollection<CopyFailure>? selectedFailures)
+    {
+        if (selectedFailures is null)
+            return originalJob.Failures;
+        if (selectedFailures.Count == 0)
+            return [];
+
+        var original = originalJob.Failures.ToHashSet();
+        return selectedFailures.Where(original.Contains).Distinct().ToArray();
     }
 
     private static bool IsWithinRoot(string path, string root) =>

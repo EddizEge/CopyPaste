@@ -15,6 +15,19 @@ Assert(RobocopyRunner.CreateResult(16).Status == CopyJobStatus.Failed,
     "Exit 16 ciddi hata olarak başarısız olmalı");
 Assert(!new RobocopyResult(-1, CopyJobStatus.Cancelled, "iptal").IsSuccessful,
     "İptal sonucu başarılı sayılmamalı");
+Assert(ReleaseNotesCatalog.All is [{ Version: "1.6.0", IsPreview: false }, ..]
+       && ReleaseNotesCatalog.All.Select(note => note.Version).Distinct(StringComparer.OrdinalIgnoreCase).Count()
+          == ReleaseNotesCatalog.All.Count
+       && ReleaseNotesCatalog.All.All(note => note.TurkishChanges.Count > 0
+           && note.TurkishChanges.Count == note.EnglishChanges.Count
+           && note.TurkishChanges.All(change => !string.IsNullOrWhiteSpace(change))
+           && note.EnglishChanges.All(change => !string.IsNullOrWhiteSpace(change))),
+    "Sürüm notları yeni sürümden eskiye sıralı, benzersiz ve Türkçe/İngilizce eksiksiz olmalı");
+var protectedSelection = ProtectedFolderSelectionSerializer.Parse(
+    ProtectedFolderSelectionSerializer.Serialize([@"C:\Korumalı\Bir", @"C:\Korumalı\İki", @"C:\Korumalı\Bir"]));
+Assert(protectedSelection.SequenceEqual([@"C:\Korumalı\Bir", @"C:\Korumalı\İki"])
+       && ProtectedFolderSelectionSerializer.Parse(@"C:\Eski-Tek-Seçim").Count == 1,
+    "Korumalı çoklu klasör seçimi benzersiz JSON yollarını ve eski tek-yol biçimini desteklemeli");
 
 var partialOutput = new[]
 {
@@ -125,6 +138,38 @@ try
     Assert(info.FileName.EndsWith("robocopy.exe", StringComparison.OrdinalIgnoreCase), "Robocopy çalıştırılmalı");
     Assert(info.ArgumentList.Contains("/MT:16"), "Profil thread sayısı uygulanmalı");
     Assert(!info.ArgumentList.Contains("/MIR"), "Tehlikeli aynalama varsayılan olmamalı");
+    var previewInfo = RobocopyCommandBuilder.Build(job, listOnly: true);
+    Assert(previewInfo.ArgumentList.Contains("/L")
+           && previewInfo.ArgumentList.Contains("/V")
+           && previewInfo.ArgumentList.Contains("/NP")
+           && !previewInfo.ArgumentList.Contains("/MIR")
+           && !previewInfo.ArgumentList.Contains("/PURGE"),
+        "Önizleme gerçek ve güvenli Robocopy listeleme anahtarlarını kullanmalı");
+    var parsedPlan = RobocopyPlanService.Analyze(job,
+    [
+        @"              same               7    C:\Kaynak\aynı.txt",
+        @"         Older                  26    C:\Kaynak\değişti.txt",
+        @"         New File                6    C:\Kaynak\yeni.txt",
+        "   Files :         3         2         1         0         0         0",
+        "   Bytes :        39        32         7         0         0         0"
+    ], exitCode: 1);
+    Assert(parsedPlan.TotalFileCount == 3
+           && parsedPlan.CopyFileCount == 1
+           && parsedPlan.OverwriteFileCount == 1
+           && parsedPlan.SkippedFileCount == 1
+           && parsedPlan.BytesToCopy == 32
+           && parsedPlan.Items.Count == 3,
+        "Robocopy /L çıktısı yeni, üzerine yazılacak ve atlanacak öğeleri ayrıştırmalı");
+    var failedPlan = RobocopyPlanService.Analyze(job,
+    [
+        @"2026/07/17 09:15:32 ERROR 5 (0x00000005) Accessing Source Directory C:\Korumalı\",
+        "   Files :         1         0         0         0         1         0",
+        "   Bytes :         0         0         0         0         0         0"
+    ], exitCode: 8);
+    Assert(failedPlan.HasErrors
+           && failedPlan.FailedFileCount == 1
+           && failedPlan.Items is [{ Action: CopyPlanAction.Error }],
+        "Robocopy /L erişim hatası yol ayrıntısıyla plana eklenmeli");
     Assert(CopyDestinationResolver.Resolve(@"C:\Kaynak\Belgeler", @"D:\Yedek", CopyRootMode.SelectedFolder)
                == @"D:\Yedek\Belgeler"
            && CopyDestinationResolver.Resolve(@"C:\Kaynak\Belgeler", @"D:\Yedek", CopyRootMode.ContentsOnly)
@@ -146,6 +191,30 @@ try
            && lowResourceInfo.ArgumentList.Contains("/IORATE:25m")
            && lowResourceInfo.ArgumentList.Contains("/ZB"),
         "Düşük kaynak modu iş parçacığını ve disk erişim temposunu sınırlamalı");
+    var policyJobs = new[]
+    {
+        new CopyJob
+        {
+            SourcePath = tempSource,
+            DestinationPath = tempDestination,
+            Profile = profile,
+            Status = CopyJobStatus.Completed,
+            CompletionAction = CompletionAction.Sleep
+        },
+        new CopyJob
+        {
+            SourcePath = tempSource,
+            DestinationPath = tempDestination,
+            Profile = profile,
+            Status = CopyJobStatus.CompletedWithWarnings,
+            CompletionAction = CompletionAction.ShutDown
+        }
+    };
+    Assert(CompletionActionPolicy.ResolveForCompletedRun(policyJobs) == CompletionAction.ShutDown,
+        "Tümü başarılı kuyrukta yalnızca son işin tamamlanma eylemi seçilmeli");
+    policyJobs[0].Status = CopyJobStatus.CompletedWithErrors;
+    Assert(CompletionActionPolicy.ResolveForCompletedRun(policyJobs) == CompletionAction.None,
+        "Kısmi hata bulunan kuyrukta hiçbir güç eylemi çalışmamalı");
 
     var settingsStore = new SettingsStore(storeDirectory);
     var savedSettings = new AppSettings
@@ -222,6 +291,8 @@ try
         SourcePath = tempSource,
         DestinationPath = tempDestination,
         Profile = CopyProfiles.All[0],
+        BandwidthLimitMbps = 64,
+        CompletionAction = CompletionAction.Sleep,
         Status = CopyJobStatus.Running
     };
     var queueStateStore = new QueueStateStore(storeDirectory);
@@ -229,6 +300,8 @@ try
     var recoveredQueue = await queueStateStore.LoadAsync();
     Assert(recoveredQueue.Count == 1
            && recoveredQueue[0].Status == CopyJobStatus.Paused
+           && recoveredQueue[0].BandwidthLimitMbps == 64
+           && recoveredQueue[0].CompletionAction == CompletionAction.Sleep
            && recoveredQueue[0].Summary?.Contains("kurtarıldı") == true,
         "Çökme sırasında çalışan kuyruk işi duraklatılmış olarak kurtarılmalı");
 
@@ -243,11 +316,20 @@ try
         {
             SourcePath = tempSource,
             DestinationPath = tempDestination,
-            Profile = CopyProfiles.All[0]
+            Profile = CopyProfiles.All[0],
+            BandwidthLimitMbps = 32,
+            CompletionAction = CompletionAction.ShutDown
         }
     };
     await scheduleStore.SaveAsync(scheduledTransfer);
-    Assert((await scheduleStore.FindAsync(scheduledTransfer.Id)) is { TimeOfDay: "02:30", Kind: ScheduleKind.Weekly, DayOfWeek: DayOfWeek.Saturday },
+    Assert((await scheduleStore.FindAsync(scheduledTransfer.Id)) is
+        {
+            TimeOfDay: "02:30",
+            Kind: ScheduleKind.Weekly,
+            DayOfWeek: DayOfWeek.Saturday,
+            Job.BandwidthLimitMbps: 32,
+            Job.CompletionAction: CompletionAction.ShutDown
+        },
         "Zamanlanmış transfer tüm iş seçenekleriyle saklanmalı");
     await scheduleStore.RemoveAsync(scheduledTransfer.Id);
     Assert(await scheduleStore.FindAsync(scheduledTransfer.Id) is null,
@@ -292,6 +374,20 @@ try
            && advancedInfo.ArgumentList.Contains("node_modules")
            && advancedInfo.ArgumentList.Contains(".git"),
         "Hariç tutulan klasörler güvenli biçimde uygulanmalı");
+    var missingFailure = new CopyFailure(Path.Combine(tempSource, "artık-yok.txt"), "Dosya kaldırıldı");
+    var missingFailureJob = new CopyJob
+    {
+        SourcePath = tempSource,
+        DestinationPath = tempDestination,
+        Profile = profile,
+        Status = CopyJobStatus.CompletedWithErrors,
+        FailedItemCount = 1,
+        Failures = [missingFailure]
+    };
+    var missingRetryResult = await new FailedItemRetryService().RetryAsync(missingFailureJob);
+    Assert(missingRetryResult.Status == CopyJobStatus.Failed
+           && missingRetryResult.Failures?.SequenceEqual([missingFailure]) == true,
+        "Artık bulunmayan seçili hata yolu yeniden denenemese bile özgün hata listesi korunmalı");
 
     var unicodeFolder = Path.Combine(tempSource, "Türkçe-文件", new string('d', 48));
     Directory.CreateDirectory(unicodeFolder);
@@ -312,6 +408,16 @@ try
     job.EstimatedTotalBytes = initialAnalysis.TotalBytes;
     job.EstimatedFileCount = initialAnalysis.FileCount;
 
+    var livePlan = await new RobocopyPlanService().PlanAsync(job);
+    Assert(livePlan.CopyFileCount == 101
+           && livePlan.OverwriteFileCount == 0
+           && livePlan.SkippedFileCount == 0
+           && livePlan.BytesToCopy == initialAnalysis.TotalBytes
+           && livePlan.Items.Count == 101,
+        $"Gerçek Robocopy /L önizlemesi transfer planını doğru üretmeli " +
+        $"(yeni: {livePlan.CopyFileCount}, üzerine yaz: {livePlan.OverwriteFileCount}, " +
+        $"atla: {livePlan.SkippedFileCount}, bayt: {livePlan.BytesToCopy})");
+
     var textOnlyOptions = new CopyJobOptions { FilePatterns = ["*.txt"] };
     var filteredAnalysis = await analyzer.AnalyzeAsync(tempSource, tempDestination, textOnlyOptions);
     Assert(filteredAnalysis.FileCount == 100, "Ön analiz dosya filtresini uygulamalı");
@@ -326,18 +432,47 @@ try
         $"Canlı Robocopy ilerlemesi aktarılan bayt ve hız bilgisi üretmeli: " +
         string.Join(" || ", liveProgress.Select(value => value.Message).Where(message => message.Contains("File")).Take(5)));
 
+    var currentPlan = await new RobocopyPlanService().PlanAsync(job);
+    Assert(currentPlan.CopyFileCount == 0
+           && currentPlan.OverwriteFileCount == 0
+           && currentPlan.SkippedFileCount == 101
+           && currentPlan.BytesToCopy == 0,
+        $"Güncel hedef için Robocopy /L planı tüm dosyaları atlamalı " +
+        $"(yeni: {currentPlan.CopyFileCount}, üzerine yaz: {currentPlan.OverwriteFileCount}, " +
+        $"atla: {currentPlan.SkippedFileCount}, bayt: {currentPlan.BytesToCopy})");
+    var comparisonService = new CopyComparisonService();
+    var filterEffectComparison = await comparisonService.CompareAsync(new CopyJob
+    {
+        SourcePath = tempSource,
+        DestinationPath = tempDestination,
+        Profile = profile,
+        Options = textOnlyOptions
+    });
+    Assert(filterEffectComparison.CheckedFiles == 100
+           && filterEffectComparison.ExcludedFiles == 1
+           && filterEffectComparison.ExcludedBytes == largeFile.Length,
+        "Önizleme dosya filtrelerinin dışarıda bıraktığı sayı ve boyutu göstermeli");
+
     var firstRelative = Path.GetRelativePath(tempSource,
         Directory.EnumerateFiles(tempSource, "*.txt", SearchOption.AllDirectories).First());
     var secondRelative = Path.GetRelativePath(tempSource,
         Directory.EnumerateFiles(tempSource, "*.txt", SearchOption.AllDirectories).Skip(1).First());
     File.Delete(Path.Combine(tempDestination, firstRelative));
     await File.WriteAllTextAsync(Path.Combine(tempDestination, secondRelative), "bozuk hedef içeriği");
-    var comparisonService = new CopyComparisonService();
+    var damagedPlan = await new RobocopyPlanService().PlanAsync(job);
+    Assert(damagedPlan.CopyFileCount == 1
+           && damagedPlan.OverwriteFileCount == 1
+           && damagedPlan.BytesToCopy > 0,
+        $"Robocopy /L planı eksik ve değişmiş dosyaları ayırt etmeli " +
+        $"(yeni: {damagedPlan.CopyFileCount}, üzerine yaz: {damagedPlan.OverwriteFileCount})");
     var damagedComparison = await comparisonService.CompareAsync(job);
     Assert(damagedComparison.MissingFiles == 1 && damagedComparison.SizeMismatches == 1,
         "Karşılaştırma eksik ve bozuk dosyaları ayırt etmeli");
     var repairJobs = CopyRepairService.CreateRepairJobs(job, damagedComparison.Differences);
-    Assert(repairJobs.Count >= 1 && repairJobs.Sum(value => value.Options.FilePatterns.Count) == 2,
+    Assert(repairJobs.Count >= 1
+           && repairJobs.Sum(value => value.Options.FilePatterns.Count) == 2
+           && repairJobs.All(value => value.BandwidthLimitMbps == job.BandwidthLimitMbps
+               && value.CompletionAction == job.CompletionAction),
         "Onarım yalnızca farklı dosyalar için güvenli işler üretmeli");
     foreach (var repairJob in repairJobs)
         Assert((await runner.RunAsync(repairJob)).IsSuccessful, "Onarım işi başarıyla tamamlanmalı");
@@ -376,6 +511,18 @@ try
                && retryJobs[0].Options.FilePatterns.SequenceEqual(["kullanımda.txt"]),
             $"Yalnızca kopyalanamayan dosya için güvenli yeniden deneme işi oluşturulmalı " +
             $"(hatalar: {string.Join(" | ", partialJob.Failures.Select(value => value.Path))}; işler: {retryJobs.Count})");
+        var lockedFailure = partialJob.Failures.Single();
+        var untouchedFailure = new CopyFailure(Path.Combine(partialSource, "başarılı.txt"), "Seçilmedi");
+        partialJob.Failures.Add(untouchedFailure);
+        partialJob.FailedItemCount = 2;
+        var selectedRetryResult = await new FailedItemRetryService(runner).RetryAsync(
+            partialJob, selectedFailures: [lockedFailure]);
+        Assert(selectedRetryResult.Status == CopyJobStatus.CompletedWithErrors
+               && selectedRetryResult.Failures?.SequenceEqual([untouchedFailure]) == true
+               && File.Exists(Path.Combine(partialDestination, "kullanımda.txt")),
+            "Seçili hata yeniden denenirken seçilmeyen hata sonuç listesinde korunmalı");
+        partialJob.Failures = selectedRetryResult.Failures?.ToList() ?? [];
+        partialJob.FailedItemCount = selectedRetryResult.FailedItemCount;
         var retryResult = await new FailedItemRetryService(runner).RetryAsync(partialJob);
         Assert(retryResult.IsSuccessful && File.Exists(Path.Combine(partialDestination, "kullanımda.txt")),
             $"Kilidi kaldırılan dosya yalnız başına yeniden denenip kopyalanmalı ({retryResult.Summary})");

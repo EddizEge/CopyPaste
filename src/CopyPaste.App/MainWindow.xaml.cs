@@ -22,6 +22,7 @@ public sealed partial class MainWindow : Window
     private readonly CopyPreflightAnalyzer _preflightAnalyzer = new();
     private readonly CopyVerificationService _verificationService = new();
     private readonly CopyComparisonService _comparisonService = new();
+    private readonly RobocopyPlanService _planService = new();
     private readonly HistoryStore _historyStore = new();
     private readonly SettingsStore _settingsStore = new();
     private readonly JobLogStore _jobLogStore = new();
@@ -59,6 +60,7 @@ public sealed partial class MainWindow : Window
     private readonly CopyJob? _startupJob;
     private readonly IReadOnlyList<string> _startupSourcePaths;
     private readonly string? _startupDestinationPath;
+    private IReadOnlyList<string> _pendingMultiSourcePaths = [];
 
     public MainWindow(ShellLaunchRequest? shellRequest = null, AppNotificationService? notificationService = null)
     {
@@ -66,6 +68,7 @@ public sealed partial class MainWindow : Window
         _startupJob = shellRequest?.ScheduledJob;
         _useBackupModeForSource = shellRequest?.UseBackupMode == true;
         _startupSourcePaths = shellRequest?.SourcePaths ?? [];
+        _pendingMultiSourcePaths = _startupSourcePaths;
         _startupDestinationPath = shellRequest?.DestinationPath;
         _failedItemRetryService = new FailedItemRetryService(_runner);
         _notificationService = notificationService ?? new AppNotificationService();
@@ -76,6 +79,7 @@ public sealed partial class MainWindow : Window
         SetTitleBar(AppTitleBar);
         _appWindow.TitleBar.ButtonBackgroundColor = Microsoft.UI.Colors.Transparent;
         _appWindow.TitleBar.ButtonInactiveBackgroundColor = Microsoft.UI.Colors.Transparent;
+        VersionBadgeText.Text = GetCurrentVersion().ToString(3);
         _appWindow.Resize(new Windows.Graphics.SizeInt32(1380, 880));
         _appWindow.Closing += AppWindow_Closing;
         Closed += MainWindow_Closed;
@@ -127,6 +131,7 @@ public sealed partial class MainWindow : Window
                 DestinationTextBox.Text = _startupDestinationPath;
                 await AddCurrentTransferToQueueAsync();
             }
+            _pendingMultiSourcePaths = [];
             await RunQueueAsync();
         }
         else if (autoStart && await AddCurrentTransferToQueueAsync())
@@ -161,8 +166,7 @@ public sealed partial class MainWindow : Window
         }
         try
         {
-            var currentVersion = Assembly.GetExecutingAssembly().GetName().Version
-                ?? new Version(1, 5, 1, 0);
+            var currentVersion = GetCurrentVersion();
             var result = await _updateService.CheckAsync(currentVersion);
             switch (result.Status)
             {
@@ -297,21 +301,59 @@ public sealed partial class MainWindow : Window
             DestinationTextBox.Text = folder.Path;
     }
 
+    private void TransferPath_Changed(object sender, TextChangedEventArgs e) =>
+        UpdateResolvedDestinationPreview();
+
+    private void CopyRootModeComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e) =>
+        UpdateResolvedDestinationPreview();
+
+    private void UpdateResolvedDestinationPreview()
+    {
+        if (SourceTextBox is null || DestinationTextBox is null
+            || CopyRootModeComboBox is null || ResolvedDestinationBar is null)
+            return;
+        try
+        {
+            if (string.IsNullOrWhiteSpace(SourceTextBox.Text)
+                || string.IsNullOrWhiteSpace(DestinationTextBox.Text))
+            {
+                ResolvedDestinationBar.Visibility = Visibility.Collapsed;
+                return;
+            }
+            var source = Path.GetFullPath(SourceTextBox.Text.Trim());
+            var destinationRoot = Path.GetFullPath(DestinationTextBox.Text.Trim());
+            var rootMode = (CopyRootModeComboBox.SelectedItem as OptionChoice<CopyRootMode>)?.Value
+                ?? CopyRootMode.SelectedFolder;
+            var destination = CopyDestinationResolver.Resolve(source, destinationRoot, rootMode);
+            ResolvedDestinationText.Text = T($"Çözümlenmiş hedef: {destination}",
+                $"Resolved destination: {destination}");
+            ResolvedDestinationBar.Visibility = Visibility.Visible;
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            ResolvedDestinationBar.Visibility = Visibility.Collapsed;
+        }
+    }
+
     private async void ProtectedSourceButton_Click(object sender, RoutedEventArgs e)
     {
         if (!ProtectedFolderPickerService.IsElevated())
         {
-            if (ProtectedFolderPickerService.LaunchElevatedSession(DestinationTextBox.Text))
+            if (ProtectedFolderPickerService.LaunchElevatedSession(DestinationTextBox.Text, _language))
                 Close();
             return;
         }
-        var path = await ProtectedFolderPickerService.PickAsync();
-        if (string.IsNullOrWhiteSpace(path))
+        var paths = await ProtectedFolderPickerService.PickManyAsync(_language);
+        if (paths.Count == 0)
             return;
-        SourceTextBox.Text = path;
+        _pendingMultiSourcePaths = paths;
+        SourceTextBox.Text = paths[0];
         _useBackupModeForSource = true;
-        PreflightText.Text = T("Korumalı kaynak seçildi. Sahiplik ve klasör izinleri değiştirilmedi.",
-            "Protected source selected. Ownership and folder permissions were not changed.");
+        PreflightText.Text = T(
+            $"{paths.Count:N0} korumalı kaynak seçildi. Kuyruğa ekle düğmesi her klasör için ayrı iş oluşturacak. " +
+            "Sahiplik ve klasör izinleri değiştirilmedi.",
+            $"{paths.Count:N0} protected sources selected. Add to queue will create a separate job for each folder. " +
+            "Ownership and folder permissions were not changed.");
         PreflightInfoBar.Visibility = Visibility.Visible;
     }
 
@@ -327,7 +369,25 @@ public sealed partial class MainWindow : Window
 
     private async void StartButton_Click(object sender, RoutedEventArgs e)
     {
-        await AddCurrentTransferToQueueAsync();
+        if (_pendingMultiSourcePaths.Count <= 1)
+        {
+            await AddCurrentTransferToQueueAsync();
+            return;
+        }
+
+        var pending = _pendingMultiSourcePaths;
+        var addedCount = 0;
+        foreach (var sourcePath in pending)
+        {
+            SourceTextBox.Text = sourcePath;
+            if (!await AddCurrentTransferToQueueAsync())
+                break;
+            addedCount++;
+        }
+        _pendingMultiSourcePaths = pending.Skip(addedCount).ToArray();
+        PreflightText.Text = T($"{addedCount:N0} korumalı kaynak kuyruğa eklendi.",
+            $"Added {addedCount:N0} protected sources to the queue.");
+        PreflightInfoBar.Visibility = Visibility.Visible;
     }
 
     private async void CompareButton_Click(object sender, RoutedEventArgs e)
@@ -341,17 +401,26 @@ public sealed partial class MainWindow : Window
         CompareButton.Content = T("Karşılaştırılıyor…", "Comparing…");
         try
         {
-            var progress = new Progress<CopyVerificationProgress>(value =>
+            var planProgress = new Progress<int>(count =>
+                PreflightText.Text = T($"Robocopy planı oluşturuluyor: {count:N0} dosya",
+                    $"Building Robocopy plan: {count:N0} files"));
+            PreflightInfoBar.Visibility = Visibility.Visible;
+            var plan = await _planService.PlanAsync(draft, planProgress);
+            var comparisonProgress = new Progress<CopyVerificationProgress>(value =>
                 PreflightText.Text = T($"Karşılaştırılıyor: {value.CheckedFiles:N0} dosya",
                     $"Comparing: {value.CheckedFiles:N0} files"));
-            PreflightInfoBar.Visibility = Visibility.Visible;
-            var comparison = await _comparisonService.CompareAsync(draft, progress);
-            var lines = comparison.Differences.Take(500)
-                .Select(item => $"{item.RelativePath}\n{item.Detail}")
+            var comparison = await _comparisonService.CompareAsync(draft, comparisonProgress);
+            PreflightText.Text = T($"Önizleme tamamlandı: {plan.TotalFileCount:N0} dosya",
+                $"Preview complete: {plan.TotalFileCount:N0} files");
+            var lines = plan.Items
+                .Select(item => $"{PlanActionLabel(item.Action)} • {QueueItemViewModel.FormatBytes(item.Bytes)}\n{item.Path}")
                 .ToList();
             if (lines.Count == 0)
-                lines.Add(T("Kaynak ve hedef eşleşiyor; onarım gerekmiyor.",
-                    "Source and destination match; no repair is needed."));
+                lines.Add(T("Robocopy bu ayarlarla işlenecek dosya bulamadı.",
+                    "Robocopy found no files to process with these settings."));
+            if (plan.IsTruncated)
+                lines.Add(T("İlk 500 öğe gösteriliyor; özet tüm planı kapsar.",
+                    "Showing the first 500 items; the summary covers the full plan."));
             var list = new ListView
             {
                 ItemsSource = lines,
@@ -362,12 +431,18 @@ public sealed partial class MainWindow : Window
             var summary = new TextBlock
             {
                 Text = T(
-                    $"{comparison.CheckedFiles:N0} kontrol • {comparison.IdenticalFiles:N0} aynı • " +
-                    $"{comparison.MissingFiles:N0} eksik • {comparison.SizeMismatches:N0} boyut farkı • " +
-                    $"{comparison.HashMismatches:N0} hash farkı • {comparison.ReadErrors:N0} okuma hatası",
-                    $"{comparison.CheckedFiles:N0} checked • {comparison.IdenticalFiles:N0} identical • " +
-                    $"{comparison.MissingFiles:N0} missing • {comparison.SizeMismatches:N0} size mismatches • " +
-                    $"{comparison.HashMismatches:N0} hash mismatches • {comparison.ReadErrors:N0} read errors"),
+                    $"Çözümlenmiş hedef: {draft.DestinationPath}\n" +
+                    $"{plan.CopyFileCount:N0} yeni • {plan.OverwriteFileCount:N0} üzerine yazılacak • " +
+                    $"{plan.SkippedFileCount:N0} atlanacak • {plan.FailedFileCount:N0} hata • " +
+                    $"{QueueItemViewModel.FormatBytes(plan.BytesToCopy)} kopyalanacak\n" +
+                    $"{comparison.ExcludedFiles:N0} dosya • {QueueItemViewModel.FormatBytes(comparison.ExcludedBytes)} filtre dışında" +
+                    FormatPlanDuration(plan.EstimatedDuration, false),
+                    $"Resolved destination: {draft.DestinationPath}\n" +
+                    $"{plan.CopyFileCount:N0} new • {plan.OverwriteFileCount:N0} overwrite • " +
+                    $"{plan.SkippedFileCount:N0} skip • {plan.FailedFileCount:N0} errors • " +
+                    $"{QueueItemViewModel.FormatBytes(plan.BytesToCopy)} to copy\n" +
+                    $"{comparison.ExcludedFiles:N0} files • {QueueItemViewModel.FormatBytes(comparison.ExcludedBytes)} excluded by filters" +
+                    FormatPlanDuration(plan.EstimatedDuration, true)),
                 TextWrapping = TextWrapping.Wrap
             };
             var panel = new StackPanel { Spacing = 12 };
@@ -411,6 +486,92 @@ public sealed partial class MainWindow : Window
         }
     }
 
+    private async void ReleaseNotesButton_Click(object sender, RoutedEventArgs e)
+    {
+        var english = LocalizationService.IsEnglish(_language);
+        var notesPanel = new StackPanel { Spacing = 12 };
+        notesPanel.Children.Add(new TextBlock
+        {
+            Text = T(
+                $"Yüklü sürüm: {GetCurrentVersion().ToString(3)}. Geliştirilmekte olan ve önceki sürümlerin ayrıntıları aşağıdadır.",
+                $"Installed version: {GetCurrentVersion().ToString(3)}. Details for the version in development and previous releases are below."),
+            TextWrapping = TextWrapping.Wrap,
+            Foreground = Application.Current.Resources["MutedBrush"] as Microsoft.UI.Xaml.Media.Brush
+        });
+
+        foreach (var note in ReleaseNotesCatalog.All)
+        {
+            var changes = english ? note.EnglishChanges : note.TurkishChanges;
+            var card = new StackPanel { Spacing = 8 };
+            var previewLabel = note.IsPreview
+                ? T(" • Geliştiriliyor", " • In development")
+                : string.Empty;
+            card.Children.Add(new TextBlock
+            {
+                Text = $"CopyPaste {note.Version}{previewLabel}",
+                FontSize = 17,
+                FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+                Foreground = Application.Current.Resources["AccentBrush"] as Microsoft.UI.Xaml.Media.Brush
+            });
+            foreach (var change in changes)
+            {
+                card.Children.Add(new TextBlock
+                {
+                    Text = $"• {change}",
+                    TextWrapping = TextWrapping.Wrap,
+                    Foreground = Application.Current.Resources["MutedBrush"] as Microsoft.UI.Xaml.Media.Brush
+                });
+            }
+            notesPanel.Children.Add(new Border
+            {
+                Background = Application.Current.Resources["CardStrongBrush"] as Microsoft.UI.Xaml.Media.Brush,
+                BorderBrush = Application.Current.Resources["StrokeBrush"] as Microsoft.UI.Xaml.Media.Brush,
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(10),
+                Padding = new Thickness(14),
+                Child = card
+            });
+        }
+
+        var dialog = new ContentDialog
+        {
+            XamlRoot = RootGrid.XamlRoot,
+            Title = T("Sürüm notları", "Release notes"),
+            Content = new ScrollViewer
+            {
+                Content = notesPanel,
+                MaxHeight = 580,
+                MaxWidth = 700,
+                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled
+            },
+            CloseButtonText = T("Kapat", "Close")
+        };
+        await dialog.ShowAsync();
+    }
+
+    private static Version GetCurrentVersion() =>
+        Assembly.GetExecutingAssembly().GetName().Version ?? new Version(0, 0, 0, 0);
+
+    private string PlanActionLabel(CopyPlanAction action) => action switch
+    {
+        CopyPlanAction.Copy => T("Kopyala", "Copy"),
+        CopyPlanAction.Overwrite => T("Üzerine yaz", "Overwrite"),
+        CopyPlanAction.Skip => T("Atla", "Skip"),
+        _ => T("Hata", "Error")
+    };
+
+    private static string FormatPlanDuration(TimeSpan? duration, bool english)
+    {
+        if (duration is null)
+            return string.Empty;
+        var value = duration.Value;
+        var text = value.TotalHours >= 1
+            ? $"{(int)value.TotalHours}:{value.Minutes:00}:{value.Seconds:00}"
+            : $"{value.Minutes}:{value.Seconds:00}";
+        return english ? $" • estimated {text}" : $" • tahmini {text}";
+    }
+
     private CopyJob? CreateDraftJob()
     {
         if (ProfileComboBox.SelectedItem is not CopyProfile profile
@@ -447,7 +608,8 @@ public sealed partial class MainWindow : Window
                 RootMode = rootMode,
                 Profile = profile,
                 RequestedPerformanceMode = _settings.PerformanceMode,
-                BandwidthLimitMbps = _settings.BandwidthLimitMbps,
+                BandwidthLimitMbps = GetJobBandwidthLimit(),
+                CompletionAction = GetJobCompletionAction(),
                 UseBackupMode = _useBackupModeForSource,
                 Options = options.Options!
             };
@@ -516,7 +678,8 @@ public sealed partial class MainWindow : Window
             RootMode = rootMode,
             Profile = profile,
             RequestedPerformanceMode = _settings.PerformanceMode,
-            BandwidthLimitMbps = _settings.BandwidthLimitMbps,
+            BandwidthLimitMbps = GetJobBandwidthLimit(),
+            CompletionAction = GetJobCompletionAction(),
             UseBackupMode = _useBackupModeForSource,
             Options = optionsResult.Options!
         };
@@ -716,10 +879,11 @@ public sealed partial class MainWindow : Window
         _copyCancellation = null;
         await SaveQueueStateAsync();
         sleepGuard.Dispose();
-        if (!_pauseRequested && partialCount == 0 && failedCount == 0
-            && _settings.CompletionAction != CompletionAction.None)
+        var finalCompletionAction = CompletionActionPolicy.ResolveForCompletedRun(
+            pendingItems.Select(item => item.Job).ToArray());
+        if (!_pauseRequested && finalCompletionAction != CompletionAction.None)
         {
-            try { PowerManagementService.Execute(_settings.CompletionAction); }
+            try { PowerManagementService.Execute(finalCompletionAction); }
             catch (InvalidOperationException ex)
             {
                 ValidationText.Text = ex.Message;
@@ -1202,7 +1366,8 @@ public sealed partial class MainWindow : Window
                     ?? CopyRootMode.SelectedFolder,
                 Profile = profile,
                 RequestedPerformanceMode = _settings.PerformanceMode,
-                BandwidthLimitMbps = _settings.BandwidthLimitMbps,
+                BandwidthLimitMbps = GetJobBandwidthLimit(),
+                CompletionAction = GetJobCompletionAction(),
                 UseBackupMode = _useBackupModeForSource,
                 Options = options.Options!
             }
@@ -1300,7 +1465,8 @@ public sealed partial class MainWindow : Window
             startWithWindows.Toggled += (_, _) => startMinimized.IsEnabled = startWithWindows.IsOn;
             var bandwidthLimit = new NumberBox
             {
-                Header = T("Hız sınırı (MB/sn, 0 = sınırsız)", "Speed limit (MB/s, 0 = unlimited)"),
+                Header = T("Varsayılan iş hız sınırı (MB/sn, 0 = sınırsız)",
+                    "Default job speed limit (MB/s, 0 = unlimited)"),
                 Minimum = 0,
                 Maximum = 10240,
                 Value = _settings.BandwidthLimitMbps,
@@ -1309,7 +1475,7 @@ public sealed partial class MainWindow : Window
             };
             var completionAction = new ComboBox
             {
-                Header = T("Kuyruk tamamlandığında", "When the queue finishes"),
+                Header = T("Varsayılan iş tamamlanma eylemi", "Default job completion action"),
                 HorizontalAlignment = HorizontalAlignment.Stretch,
                 DisplayMemberPath = "Label",
                 ItemsSource = new[]
@@ -1445,6 +1611,45 @@ public sealed partial class MainWindow : Window
         ApplyLanguage(_settings.Language);
     }
 
+    private int GetJobBandwidthLimit() => double.IsNaN(JobBandwidthLimitBox.Value)
+        ? 0
+        : (int)Math.Clamp(JobBandwidthLimitBox.Value, 0, 10240);
+
+    private CompletionAction GetJobCompletionAction() =>
+        (JobCompletionActionComboBox.SelectedItem as OptionChoice<CompletionAction>)?.Value
+        ?? CompletionAction.None;
+
+    private void FilterOptions_Changed(object sender, TextChangedEventArgs e) =>
+        UpdateFilterEffectText();
+
+    private void ResetFiltersButton_Click(object sender, RoutedEventArgs e)
+    {
+        FilePatternsTextBox.Text = "*";
+        ExcludedDirectoriesTextBox.Text = string.Empty;
+    }
+
+    private void UpdateFilterEffectText()
+    {
+        if (FilePatternsTextBox is null || ExcludedDirectoriesTextBox is null || FilterEffectText is null)
+            return;
+        var parsed = CopyJobOptionsParser.Parse(
+            ExistingFileBehavior.Update,
+            VerificationMode.None,
+            FilePatternsTextBox.Text,
+            ExcludedDirectoriesTextBox.Text);
+        if (!parsed.IsValid || parsed.Options is null)
+        {
+            FilterEffectText.Text = T($"Filtre hatası: {parsed.Error}",
+                "Filter syntax is invalid. Use file names or wildcards only; paths and command switches are not allowed.");
+            return;
+        }
+        FilterEffectText.Text = T(
+            $"Etkin: {parsed.Options.FilePatterns.Count:N0} dosya kalıbı • " +
+            $"{parsed.Options.ExcludedDirectories.Count:N0} hariç klasör. Kesin etkiyi görmek için Önizle'yi açın.",
+            $"Active: {parsed.Options.FilePatterns.Count:N0} file patterns • " +
+            $"{parsed.Options.ExcludedDirectories.Count:N0} excluded folders. Open Preview for the exact effect.");
+    }
+
     private AppSettings GetSettingsFromUi() => new()
     {
         DefaultProfileId = (ProfileComboBox.SelectedItem as CopyProfile)?.Id ?? "balanced",
@@ -1464,8 +1669,8 @@ public sealed partial class MainWindow : Window
         StartWithWindows = _settings.StartWithWindows,
         StartMinimizedWithWindows = _settings.StartMinimizedWithWindows,
         PerformanceMode = _settings.PerformanceMode,
-        BandwidthLimitMbps = _settings.BandwidthLimitMbps,
-        CompletionAction = _settings.CompletionAction,
+        BandwidthLimitMbps = GetJobBandwidthLimit(),
+        CompletionAction = GetJobCompletionAction(),
         WaitForNetwork = WaitForNetworkToggle.IsOn,
         NetworkRetryMinutes = double.IsNaN(NetworkRetryMinutesBox.Value)
             ? 15
@@ -1486,6 +1691,8 @@ public sealed partial class MainWindow : Window
         SelectChoice(CopyRootModeComboBox, settings.CopyRootMode);
         FilePatternsTextBox.Text = string.IsNullOrWhiteSpace(settings.FilePatterns) ? "*" : settings.FilePatterns;
         ExcludedDirectoriesTextBox.Text = settings.ExcludedDirectories;
+        JobBandwidthLimitBox.Value = Math.Clamp(settings.BandwidthLimitMbps, 0, 10240);
+        SelectChoice(JobCompletionActionComboBox, settings.CompletionAction);
         ContinueOnErrorToggle.IsOn = settings.ContinueQueueOnError;
         WaitForNetworkToggle.IsOn = settings.WaitForNetwork;
         NetworkRetryMinutesBox.Value = Math.Clamp(settings.NetworkRetryMinutes, 1, 1440);
@@ -1514,6 +1721,8 @@ public sealed partial class MainWindow : Window
         foreach (var item in _queue)
             item.SetLanguage(LocalizationService.IsEnglish(_language));
         UpdateProfileDescription();
+        UpdateResolvedDestinationPreview();
+        UpdateFilterEffectText();
         UpdateQueueState();
         UpdateIntegrationState();
     }
@@ -1553,6 +1762,16 @@ public sealed partial class MainWindow : Window
                 T("Yalnızca klasörün içeriğini kopyala", "Copy only the folder contents"))
         };
         SelectChoice(CopyRootModeComboBox, rootMode);
+
+        var completionAction = (JobCompletionActionComboBox.SelectedItem as OptionChoice<CompletionAction>)?.Value
+            ?? _settings.CompletionAction;
+        JobCompletionActionComboBox.ItemsSource = new[]
+        {
+            new OptionChoice<CompletionAction>(CompletionAction.None, T("Bir şey yapma", "Do nothing")),
+            new OptionChoice<CompletionAction>(CompletionAction.Sleep, T("Bilgisayarı uyut", "Put the computer to sleep")),
+            new OptionChoice<CompletionAction>(CompletionAction.ShutDown, T("Bilgisayarı kapat", "Shut down the computer"))
+        };
+        SelectChoice(JobCompletionActionComboBox, completionAction);
 
     }
 
@@ -1767,6 +1986,8 @@ public sealed partial class MainWindow : Window
         SelectChoice(ExistingFileBehaviorComboBox, job.Options.ExistingFiles);
         SelectChoice(VerificationModeComboBox, job.Options.Verification);
         SelectChoice(CopyRootModeComboBox, job.RootMode);
+        JobBandwidthLimitBox.Value = Math.Clamp(job.BandwidthLimitMbps, 0, 10240);
+        SelectChoice(JobCompletionActionComboBox, job.CompletionAction);
         FilePatternsTextBox.Text = string.Join(';', job.Options.FilePatterns);
         ExcludedDirectoriesTextBox.Text = string.Join(';', job.Options.ExcludedDirectories);
         PreflightText.Text = T("Geçmişteki transfer forma yüklendi; kontrol edip kuyruğa ekleyebilirsiniz.",
@@ -1795,6 +2016,11 @@ public sealed partial class MainWindow : Window
         CopyRootModeComboBox.IsEnabled = !running;
         FilePatternsTextBox.IsEnabled = !running;
         ExcludedDirectoriesTextBox.IsEnabled = !running;
+        ResetFiltersButton.IsEnabled = !running;
+        RetrySelectedFailuresButton.IsEnabled = !running
+            && FailedItemsListView.SelectedItems.Count > 0;
+        JobBandwidthLimitBox.IsEnabled = !running;
+        JobCompletionActionComboBox.IsEnabled = !running;
         StartButton.IsEnabled = !running;
         CompareButton.IsEnabled = !running;
         StartQueueButton.IsEnabled = !running;
@@ -1960,8 +2186,14 @@ public sealed partial class MainWindow : Window
             $"Kopyalanamayan öğeler ({Math.Max(job.FailedItemCount, job.Failures.Count):N0})",
             $"Items not copied ({Math.Max(job.FailedItemCount, job.Failures.Count):N0})");
         FailedItemsListView.ItemsSource = job.Failures;
+        FailedItemsListView.SelectedItems.Clear();
+        RetrySelectedFailuresButton.IsEnabled = false;
         OpenFailureLogButton.IsEnabled = !string.IsNullOrWhiteSpace(job.LogPath) && File.Exists(job.LogPath);
     }
+
+    private void FailedItemsListView_SelectionChanged(object sender, SelectionChangedEventArgs e) =>
+        RetrySelectedFailuresButton.IsEnabled = !_isQueueRunning
+            && FailedItemsListView.SelectedItems.Count > 0;
 
     private void CopyFailuresButton_Click(object sender, RoutedEventArgs e)
     {
@@ -2028,21 +2260,35 @@ public sealed partial class MainWindow : Window
         await RunQueueAsync();
     }
 
-    private async Task RetryOnlyFailedItemsAsync(CopyJob job)
+    private async void RetrySelectedFailuresButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_lastResultJob is null || _isQueueRunning)
+            return;
+        var selected = FailedItemsListView.SelectedItems
+            .OfType<CopyFailure>()
+            .ToArray();
+        if (selected.Length > 0)
+            await RetryOnlyFailedItemsAsync(_lastResultJob, selected);
+    }
+
+    private async Task RetryOnlyFailedItemsAsync(
+        CopyJob job,
+        IReadOnlyCollection<CopyFailure>? selectedFailures = null)
     {
         _isQueueRunning = true;
         _pauseRequested = false;
         SetRunningState(true);
         _copyCancellation = new CancellationTokenSource();
-        StatusText.Text = T($"{job.Failures.Count:N0} hatalı öğe yeniden deneniyor",
-            $"Retrying {job.Failures.Count:N0} failed items");
+        var retryCount = selectedFailures?.Count ?? job.Failures.Count;
+        StatusText.Text = T($"{retryCount:N0} hatalı öğe yeniden deneniyor",
+            $"Retrying {retryCount:N0} failed items");
         var logLines = new ConcurrentQueue<string>();
         var progress = new Progress<RobocopyProgress>(UpdateProgress);
         RobocopyResult result;
         try
         {
             result = await _failedItemRetryService.RetryAsync(
-                job, progress, _copyCancellation.Token, logLines.Enqueue);
+                job, progress, _copyCancellation.Token, logLines.Enqueue, selectedFailures);
         }
         catch (OperationCanceledException)
         {
@@ -2061,7 +2307,11 @@ public sealed partial class MainWindow : Window
         {
             job.Summary += " Günlük kaydedilemedi: " + ex.Message;
         }
-        await _historyStore.AddAsync(job);
+        try { await _historyStore.AddAsync(job); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            job.Summary += " " + T("Geçmiş kaydedilemedi: ", "History could not be saved: ") + ex.Message;
+        }
         var queueItem = _queue.FirstOrDefault(item => item.Job.Id == job.Id);
         queueItem?.SetResult(result with { Summary = LocalizeSummary(result.Summary) });
         ShowResult(job);

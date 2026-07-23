@@ -8,6 +8,7 @@ public static class LocalizationService
 {
     private static readonly IReadOnlyList<(string Tr, string En)> Texts =
     [
+        ("Sürüm notları", "Release notes"),
         ("Güncellemeler", "Updates"), ("Güncellemeleri kontrol et", "Check for updates"),
         ("Robocopy ile hızlı ve doğrulanabilir transfer", "Fast, verifiable transfers powered by Robocopy"),
         ("Geçmiş", "History"), ("Zamanlama", "Scheduling"), ("Ayarlar", "Settings"),
@@ -24,13 +25,21 @@ public static class LocalizationService
         ("Kopyalanamayan öğeler", "Items not copied"),
         ("Diğer dosyalar işlendi. Bu öğeleri inceleyebilir veya yeniden deneyebilirsiniz.", "Other files were processed. Review or retry these items."),
         ("Listeyi kopyala", "Copy list"), ("Günlüğü aç", "Open log"), ("Rapor", "Report"), ("Yeniden dene", "Retry"),
+        ("Tümünü yeniden dene", "Retry all"), ("Seçilenleri yeniden dene", "Retry selected"),
         ("Transfer ayarları", "Transfer settings"), ("Mevcut dosyalar", "Existing files"), ("Doğrulama", "Verification"),
         ("Klasör kopyalama biçimi", "Folder copy mode"),
+        ("İş hız sınırı (MB/sn)", "Job speed limit (MB/s)"),
+        ("İş tamamlandığında", "When the job completes"),
         ("Korumalı klasörü yönetici olarak seç", "Select a protected folder as administrator"),
         ("Korumalı kaynak yönetici yetkisiyle açıldı. Sahiplik ve klasör izinleri değiştirilmedi.",
             "The protected source was opened with administrator rights. Ownership and folder permissions were not changed."),
         ("Gelişmiş seçenekler", "Advanced options"), ("Dosya filtreleri", "File filters"),
         ("Hariç tutulacak klasörler", "Excluded folders"), ("Hata olsa da sıradaki işe geç", "Continue to next job after an error"),
+        ("Birden çok kalıbı noktalı virgülle ayırın. Örnek: *.jpg;*.png",
+            "Separate multiple patterns with semicolons. Example: *.jpg;*.png"),
+        ("Klasör adlarını noktalı virgülle ayırın; eşleşen klasörler ve içerikleri atlanır.",
+            "Separate folder names with semicolons; matching folders and their contents are skipped."),
+        ("Filtreleri sıfırla", "Reset filters"),
         ("Transfer sonunda bildirim göster", "Show notification when transfer finishes"),
         ("Aktif işte kapatılırsa tepsiye küçült", "Minimize to tray when closed during a transfer"),
         ("Güncellemeleri güvenle arka planda indir", "Securely download updates in the background"),
@@ -89,7 +98,9 @@ public static class LocalizationService
                 toggle.OffContent = IsEnglish(language) ? "Off" : "Kapalı";
                 break;
             case Expander expander when expander.Header is string header:
-                expander.Header = Translate(header, language);
+                var translatedHeader = Translate(header, language);
+                expander.Header = translatedHeader;
+                Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(expander, translatedHeader);
                 break;
             case TextBox textBox when !string.IsNullOrWhiteSpace(textBox.PlaceholderText):
                 textBox.PlaceholderText = Translate(textBox.PlaceholderText, language);

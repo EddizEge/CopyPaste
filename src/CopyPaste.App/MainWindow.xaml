@@ -25,7 +25,8 @@
                         <StackPanel Orientation="Horizontal" Spacing="9">
                             <TextBlock Text="CopyPaste" Foreground="White" FontSize="20" FontWeight="SemiBold" />
                             <Border Background="#28233F" CornerRadius="8" Padding="8,2" VerticalAlignment="Center">
-                                <TextBlock Text="1.5" Foreground="#B9B1FF" FontSize="10" FontWeight="SemiBold" />
+                                <TextBlock x:Name="VersionBadgeText" Text="—" Foreground="#B9B1FF"
+                                           FontSize="10" FontWeight="SemiBold" />
                             </Border>
                         </StackPanel>
                         <TextBlock Text="Robocopy ile hızlı ve doğrulanabilir transfer" Style="{StaticResource MutedTextStyle}" />
@@ -33,6 +34,8 @@
                 </StackPanel>
                 <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center"
                             Margin="0,0,138,0">
+                    <Button x:Name="ReleaseNotesButton" Content="Sürüm notları"
+                            Style="{StaticResource QuietButtonStyle}" Click="ReleaseNotesButton_Click" />
                     <Button x:Name="CheckUpdatesButton" Content="Güncellemeler" Style="{StaticResource QuietButtonStyle}"
                             Click="CheckUpdatesButton_Click" />
                     <Button Content="Geçmiş" Style="{StaticResource QuietButtonStyle}" Click="HistoryButton_Click" />
@@ -85,7 +88,8 @@
                                         <ColumnDefinition Width="Auto" />
                                     </Grid.ColumnDefinitions>
                                     <TextBox x:Name="SourceTextBox" Style="{StaticResource PathTextBoxStyle}"
-                                             PlaceholderText="Kopyalanacak klasör" Padding="12,8" />
+                                             PlaceholderText="Kopyalanacak klasör" Padding="12,8"
+                                             TextChanged="TransferPath_Changed" />
                                     <Button Grid.Column="1" Content="★" Tag="Source" Click="FavoriteButton_Click"
                                             Width="34" Height="34" Margin="4" Background="Transparent"
                                             Foreground="#B9A9FF" BorderThickness="0" ToolTipService.ToolTip="Favorilere ekle veya kaldır" />
@@ -111,7 +115,8 @@
                                         <ColumnDefinition Width="Auto" />
                                     </Grid.ColumnDefinitions>
                                     <TextBox x:Name="DestinationTextBox" Style="{StaticResource PathTextBoxStyle}"
-                                             PlaceholderText="Dosyaların kopyalanacağı klasör" Padding="12,8" />
+                                             PlaceholderText="Dosyaların kopyalanacağı klasör" Padding="12,8"
+                                             TextChanged="TransferPath_Changed" />
                                     <Button Grid.Column="1" Content="★" Tag="Destination" Click="FavoriteButton_Click"
                                             Width="34" Height="34" Margin="4" Background="Transparent"
                                             Foreground="#B9A9FF" BorderThickness="0" ToolTipService.ToolTip="Favorilere ekle veya kaldır" />
@@ -138,6 +143,12 @@
                                 </Grid>
                             </StackPanel>
                         </Grid>
+
+                        <Border x:Name="ResolvedDestinationBar" Visibility="Collapsed" Background="#171A23"
+                                BorderBrush="#373250" BorderThickness="1" CornerRadius="8" Padding="12,8">
+                            <TextBlock x:Name="ResolvedDestinationText" Foreground="#B9B1FF" FontSize="11"
+                                       TextWrapping="Wrap" />
+                        </Border>
 
                         <Grid ColumnSpacing="12">
                             <Grid.ColumnDefinitions>
@@ -346,11 +357,16 @@
                                                 Style="{StaticResource QuietButtonStyle}" Click="OpenFailureLogButton_Click" />
                                         <Button Content="Rapor" Style="{StaticResource QuietButtonStyle}"
                                                 Click="ExportReportButton_Click" />
-                                        <Button Content="Yeniden dene" Style="{StaticResource PrimaryButtonStyle}"
+                                        <Button Content="Tümünü yeniden dene" Style="{StaticResource QuietButtonStyle}"
                                                 Click="RetryFailedButton_Click" />
+                                        <Button x:Name="RetrySelectedFailuresButton" Content="Seçilenleri yeniden dene"
+                                                Style="{StaticResource PrimaryButtonStyle}" IsEnabled="False"
+                                                Click="RetrySelectedFailuresButton_Click" />
                                     </StackPanel>
                                 </Grid>
-                                <ListView x:Name="FailedItemsListView" MaxHeight="230" Background="Transparent">
+                                <ListView x:Name="FailedItemsListView" MaxHeight="230" Background="Transparent"
+                                          SelectionMode="Multiple"
+                                          SelectionChanged="FailedItemsListView_SelectionChanged">
                                     <ListView.ItemContainerStyle>
                                         <Style TargetType="ListViewItem">
                                             <Setter Property="HorizontalContentAlignment" Value="Stretch" />
@@ -394,8 +410,25 @@
                                 <StackPanel Spacing="5">
                                     <TextBlock Text="Klasör kopyalama biçimi" Foreground="#C7CBD5" FontSize="12" />
                                     <ComboBox x:Name="CopyRootModeComboBox" DisplayMemberPath="Label"
-                                              HorizontalAlignment="Stretch" />
+                                              HorizontalAlignment="Stretch"
+                                              SelectionChanged="CopyRootModeComboBox_SelectionChanged" />
                                 </StackPanel>
+                                <Grid ColumnSpacing="10">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Spacing="5">
+                                        <TextBlock Text="İş hız sınırı (MB/sn)" Foreground="#C7CBD5" FontSize="12" />
+                                        <NumberBox x:Name="JobBandwidthLimitBox" Minimum="0" Maximum="10240" Value="0"
+                                                   SpinButtonPlacementMode="Compact" HorizontalAlignment="Stretch" />
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="1" Spacing="5">
+                                        <TextBlock Text="İş tamamlandığında" Foreground="#C7CBD5" FontSize="12" />
+                                        <ComboBox x:Name="JobCompletionActionComboBox" DisplayMemberPath="Label"
+                                                  HorizontalAlignment="Stretch" />
+                                    </StackPanel>
+                                </Grid>
                                 <Expander Header="Gelişmiş seçenekler" Background="#1B1E25"
                                           BorderBrush="#333946" BorderThickness="1" CornerRadius="9" Padding="11">
                                     <StackPanel Spacing="11" Margin="0,10,0,2">
@@ -403,14 +436,24 @@
                                             <TextBlock Text="Dosya filtreleri" Foreground="#C7CBD5" FontSize="12" />
                                             <TextBox x:Name="FilePatternsTextBox" Text="*"
                                                      Style="{StaticResource PathTextBoxStyle}"
-                                                     PlaceholderText="*.jpg;*.png;rapor-??.pdf" />
+                                                     PlaceholderText="*.jpg;*.png;rapor-??.pdf"
+                                                     TextChanged="FilterOptions_Changed" />
+                                            <TextBlock Text="Birden çok kalıbı noktalı virgülle ayırın. Örnek: *.jpg;*.png"
+                                                       Foreground="#858D9C" FontSize="10" TextWrapping="Wrap" />
                                         </StackPanel>
                                         <StackPanel Spacing="5">
                                             <TextBlock Text="Hariç tutulacak klasörler" Foreground="#C7CBD5" FontSize="12" />
                                             <TextBox x:Name="ExcludedDirectoriesTextBox"
                                                      Style="{StaticResource PathTextBoxStyle}"
-                                                     PlaceholderText="node_modules;.git;temp" />
+                                                     PlaceholderText="node_modules;.git;temp"
+                                                     TextChanged="FilterOptions_Changed" />
+                                            <TextBlock Text="Klasör adlarını noktalı virgülle ayırın; eşleşen klasörler ve içerikleri atlanır."
+                                                       Foreground="#858D9C" FontSize="10" TextWrapping="Wrap" />
                                         </StackPanel>
+                                        <TextBlock x:Name="FilterEffectText" Foreground="#B9B1FF" FontSize="11"
+                                                   TextWrapping="Wrap" />
+                                        <Button x:Name="ResetFiltersButton" Content="Filtreleri sıfırla" Style="{StaticResource QuietButtonStyle}"
+                                                HorizontalAlignment="Stretch" Click="ResetFiltersButton_Click" />
                                     </StackPanel>
                                 </Expander>
                                 <ToggleSwitch x:Name="ContinueOnErrorToggle" Header="Hata olsa da sıradaki işe geç" />

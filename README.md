@@ -2,7 +2,11 @@
 
 CopyPaste, Windows'un yerleşik Robocopy motorunu modern ve güvenli bir arayüzle sunan dosya transfer uygulamasıdır.
 
-## CopyPaste 1.5
+CopyPaste, [MIT License](LICENSE) ile açık kaynak olarak yayımlanır. Ayrıntılar için
+[Code signing policy](CODE_SIGNING_POLICY.md) ve [gizlilik politikası](PRIVACY.md)
+belgelerine bakabilirsiniz.
+
+## CopyPaste 1.6
 
 - Seçilen klasörü hedefe klasör olarak kopyalama veya yalnızca içeriğini kopyalama; önerilen varsayılan klasörün kendisidir
 - Harici Windows disklerindeki korumalı kaynakları sahiplik ve ACL değiştirmeden seçen yönetici gezgini ve Robocopy `/ZB` modu
@@ -116,8 +120,8 @@ Dağıtılabilir paketi üretmek için:
 .\tools\Build-Msix.ps1
 ```
 
-Önerilen dağıtım dosyası `artifacts\CopyPaste-1.5.1-Setup.exe` kurulumudur. Alternatif olarak
-`artifacts\CopyPaste-1.5.1-win-x64.zip` arşivini bir klasöre çıkarıp `CopyPaste.App.exe`
+Önerilen dağıtım dosyası `artifacts\CopyPaste-1.6.0-Setup.exe` kurulumudur. Alternatif olarak
+`artifacts\CopyPaste-1.6.0-win-x64.zip` arşivini bir klasöre çıkarıp `CopyPaste.App.exe`
 dosyasını doğrudan çalıştırabilirsiniz. Explorer sağ tık menüsü uygulamadaki
 “Sağ tık menüsünü ekle” düğmesiyle kullanıcı hesabına kaydedilir; Windows 11'de klasik
 menüler “Daha fazla seçenek göster” altında görüntülenir.
@@ -125,12 +129,21 @@ menüler “Daha fazla seçenek göster” altında görüntülenir.
 Kurumsal sessiz kurulum örneği:
 
 ```powershell
-.\CopyPaste-1.5.1-Setup.exe /LANG=turkish /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /TASKS="explorer"
+.\CopyPaste-1.6.0-Setup.exe /LANG=turkish /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /TASKS="explorer"
 ```
 
-İmzalı MSIX paketi `IExplorerCommand` tabanlı modern Windows 11 menüsünü içerir. CI üzerinde
-`WINDOWS_CERTIFICATE_BASE64` ve `WINDOWS_CERTIFICATE_PASSWORD` sırları tanımlandığında EXE,
-kurulum ve MSIX otomatik imzalanır. Sertifika yoksa kullanılabilir olmayan imzasız MSIX Release'a eklenmez.
+İmzalı MSIX paketi `IExplorerCommand` tabanlı modern Windows 11 menüsünü içerir. Üretim
+workflow'u güvenilir kod imzalama yapılandırması olmadan başarısız olur; GitHub Release'a
+imzasız paket eklenmez. Proje, açık kaynak sürümleri için SignPath Foundation sponsorluğuna
+başvurmaktadır. Onay ve entegrasyon tamamlandığında EXE, kurulum ve MSIX SignPath üzerinden
+imzalanacaktır.
+
+## Code signing policy
+
+Free code signing provided by [SignPath.io](https://signpath.io/), certificate by
+[SignPath Foundation](https://signpath.org/), after sponsorship approval. Ekip rolleri,
+manuel sürüm onayı ve doğrulama adımları [kod imzalama politikasında](CODE_SIGNING_POLICY.md)
+açıklanır. Uygulamanın ağ davranışı için [gizlilik politikasına](PRIVACY.md) bakın.
 
 Uygulama Windows 10 1809 ve üzerini hedefler. Robocopy Windows ile birlikte gelir; harici bir kopyalama aracı kurulmaz.
 
@@ -144,6 +157,6 @@ değerini ilk Release oluşturulmadan önce değiştirin.
 - `.github/workflows/pages.yml`, ana dal GitHub'a gönderildiğinde siteyi GitHub Pages'a yayınlar.
 - `.github/workflows/release.yml`, `v*` biçimindeki sürüm etiketi gönderildiğinde testleri çalıştırır,
   kurulum EXE'si ile taşınabilir paketi üretir ve SHA-256 özetleriyle GitHub Release'a ekler.
-- Yeni bir sürüm yayımlamak için proje ve manifest sürümünü artırıp `v1.5.1` benzeri aynı sürüm
+- Yeni bir sürüm yayımlamak için proje ve manifest sürümünü artırıp `v1.6.0` benzeri aynı sürüm
   etiketi oluşturun. Uygulama öncelikle `CopyPaste-*-Setup.exe`, bulunamazsa taşınabilir ZIP
   dosyasını indirme hedefi olarak kullanıcıya sunar.

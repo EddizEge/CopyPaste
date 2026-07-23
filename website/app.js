@@ -25,6 +25,13 @@ Object.assign(translations.en, {
   updateNote: "↻ Updates are securely downloaded from GitHub Releases and verified with SHA-256."
 });
 
+Object.assign(translations.tr, {
+  codeSigningPolicy: "Code signing policy / Kod imzalama politikası",
+  privacyPolicy: "Gizlilik"
+});
+Object.assign(translations.en, {
+  codeSigningPolicy: "Code signing policy", privacyPolicy: "Privacy"
+});
 translations.tr.trustOpen = "GitHub Releases";
 translations.en.trustOpen = "GitHub Releases";
 

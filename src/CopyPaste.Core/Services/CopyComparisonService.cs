@@ -20,6 +20,8 @@ public sealed record CopyComparisonResult(
     int SizeMismatches,
     int HashMismatches,
     int ReadErrors,
+    int ExcludedFiles,
+    long ExcludedBytes,
     IReadOnlyList<CopyDifference> Differences)
 {
     public bool NeedsRepair => MissingFiles + SizeMismatches + HashMismatches > 0;
@@ -44,6 +46,8 @@ public sealed class CopyComparisonService
         var sizeMismatch = 0;
         var hashMismatch = 0;
         var readErrors = 0;
+        var excludedFiles = 0;
+        long excludedBytes = 0;
         var differences = new List<CopyDifference>();
         var enumerationOptions = new EnumerationOptions
         {
@@ -57,7 +61,12 @@ public sealed class CopyComparisonService
             cancellationToken.ThrowIfCancellationRequested();
             var relativePath = Path.GetRelativePath(job.SourcePath, sourceFile);
             if (!CopyPathFilter.ShouldIncludeFile(relativePath, job.Options))
+            {
+                excludedFiles++;
+                try { excludedBytes += new FileInfo(sourceFile).Length; }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
                 continue;
+            }
             checkedFiles++;
             progress?.Report(new(checkedFiles, relativePath));
             var destinationFile = Path.Combine(job.DestinationPath, relativePath);
@@ -93,7 +102,8 @@ public sealed class CopyComparisonService
                 differences.Add(new(sourceFile, relativePath, CopyDifferenceKind.ReadError, ex.Message));
             }
         }
-        return new(checkedFiles, identical, missing, sizeMismatch, hashMismatch, readErrors, differences);
+        return new(checkedFiles, identical, missing, sizeMismatch, hashMismatch, readErrors,
+            excludedFiles, excludedBytes, differences);
     }
 
     private static bool HashesMatch(string sourcePath, string destinationPath, CancellationToken cancellationToken)
@@ -126,6 +136,7 @@ public static class CopyRepairService
                 RequestedPerformanceMode = original.RequestedPerformanceMode,
                 ActivePerformanceMode = original.ActivePerformanceMode,
                 BandwidthLimitMbps = original.BandwidthLimitMbps,
+                CompletionAction = original.CompletionAction,
                 UseBackupMode = original.UseBackupMode,
                 Options = original.Options with
                 {

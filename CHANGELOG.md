@@ -1,5 +1,20 @@
 # Değişiklik günlüğü
 
+## 1.6.0
+
+- “Önizle / karşılaştır” akışı gerçek Robocopy `/L` kuru çalışmasını kullanacak şekilde geliştirildi; yeni, üzerine yazılacak, atlanacak ve hatalı dosya sayıları ile kopyalanacak boyut gösteriliyor.
+- Önizleme, çözümlenmiş gerçek hedef yolunu gösteriyor ve hız sınırı tanımlı işler için süre tahmini üretiyor.
+- Büyük önizlemelerde Robocopy çıktısı akış halinde işleniyor; ayrıntı listesi ilk 500 öğeyle sınırlanırken özet tüm planı kapsıyor.
+- Uygulama içinden Türkçe ve İngilizce ayrıntılı sürüm notlarına erişilebilen yeni bir pencere eklendi.
+- Başlık çubuğundaki sabit `1.5` rozeti kaldırıldı; gerçek uygulama sürümü dinamik olarak gösteriliyor.
+- Hız sınırı ve uyutma/kapatma eylemi her kuyruk işi için ayrı seçilebilir hale getirildi; güç eylemi yalnızca tüm çalıştırma başarıyla bittiğinde son işten uygulanıyor.
+- Çözümlenmiş gerçek hedef yolu forma yazarken, önizlemede, kuyrukta ve aktif işte görünür hale getirildi.
+- Hata listesinden seçilen öğeleri yeniden deneme eklendi; seçilmeyen hatalar sonuç listesinden kaybolmuyor.
+- Filtre düzenleyicisine canlı geçerlilik özeti, açıklamalar ve sıfırlama eklendi; önizleme filtre dışında kalan dosya sayısı ve boyutunu gösteriyor.
+- Korumalı kaynak seçici çoklu checkbox seçimini destekliyor ve seçilen her klasörü izinleri değiştirmeden ayrı `/ZB` kuyruk işi olarak hazırlıyor.
+- Önizleme tamamlandıktan sonra durum satırının “Karşılaştırılıyor” olarak kalması düzeltildi; gelişmiş seçeneklerin erişilebilir adı seçili dile uyarlanıyor.
+- Proje MIT lisansıyla açık kaynak olarak belgelendi; SignPath Foundation başvurusu için kod imzalama ve gizlilik politikaları eklendi.
+
 ## 1.5.1
 
 - Korumalı kaynak akışı tek UAC onayıyla yükseltilmiş bir CopyPaste oturumuna taşındı; böylece Robocopy `/ZB` yedekleme yetkisi gerçek transfer sırasında da kullanılabilir.

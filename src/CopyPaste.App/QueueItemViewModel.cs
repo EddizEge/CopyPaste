@@ -19,8 +19,7 @@ public sealed class QueueItemViewModel : INotifyPropertyChanged
         Preflight = preflight;
         _english = english;
         _statusLabel = T("Bekliyor", "Waiting");
-        _detail = $"{preflight.FileCount:N0} {T("dosya", "files")} • {FormatBytes(preflight.TotalBytes)} • " +
-                  $"{job.Profile.Name} • {OptionsLabel(job.Options)}";
+        _detail = BuildWaitingDetail();
     }
 
     public CopyJob Job { get; }
@@ -89,8 +88,7 @@ public sealed class QueueItemViewModel : INotifyPropertyChanged
         Job.FailedItemCount = 0;
         Job.Failures.Clear();
         StatusLabel = T("Bekliyor", "Waiting");
-        Detail = $"{Preflight.FileCount:N0} {T("dosya", "files")} • {FormatBytes(Preflight.TotalBytes)} • " +
-                 $"{Job.Profile.Name} • {OptionsLabel(Job.Options)}";
+        Detail = BuildWaitingDetail();
         Progress = 0;
     }
 
@@ -124,6 +122,8 @@ public sealed class QueueItemViewModel : INotifyPropertyChanged
             CopyJobStatus.Cancelled => T("İptal edildi", "Cancelled"),
             _ => T("Başarısız", "Failed")
         };
+        if (Job.Status == CopyJobStatus.Ready)
+            Detail = BuildWaitingDetail();
     }
 
     private bool SetField<T>(ref T field, T value, [CallerMemberName] string? propertyName = null)
@@ -167,6 +167,24 @@ public sealed class QueueItemViewModel : INotifyPropertyChanged
         };
         return $"{existing} • {verification}";
     }
+
+    private string JobPolicyLabel()
+    {
+        var speed = Job.BandwidthLimitMbps > 0
+            ? T($"{Job.BandwidthLimitMbps:N0} MB/sn", $"{Job.BandwidthLimitMbps:N0} MB/s")
+            : T("sınırsız hız", "unlimited speed");
+        var completion = Job.CompletionAction switch
+        {
+            CompletionAction.Sleep => T("bitince uyut", "sleep when done"),
+            CompletionAction.ShutDown => T("bitince kapat", "shut down when done"),
+            _ => T("tamamlanma eylemi yok", "no completion action")
+        };
+        return $"{speed} • {completion}";
+    }
+
+    private string BuildWaitingDetail() =>
+        $"{Preflight.FileCount:N0} {T("dosya", "files")} • {FormatBytes(Preflight.TotalBytes)} • " +
+        $"{Job.Profile.Name} • {OptionsLabel(Job.Options)} • {JobPolicyLabel()}";
 
     private string T(string turkish, string english) => _english ? english : turkish;
 }

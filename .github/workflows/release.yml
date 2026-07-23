@@ -23,58 +23,67 @@ jobs:
       - name: Build portable package
         shell: pwsh
         run: ./tools/Build-Release.ps1
-      - name: Sign application when certificate is configured
+      - name: Sign application
         shell: pwsh
         env:
           WINDOWS_CERTIFICATE_BASE64: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 }}
           WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
         run: |
           if ([string]::IsNullOrWhiteSpace($env:WINDOWS_CERTIFICATE_BASE64)) {
-            Write-Host "Signing certificate is not configured; producing unsigned artifacts."
-            exit 0
+            throw "WINDOWS_CERTIFICATE_BASE64 is required for a production release."
+          }
+          if ([string]::IsNullOrWhiteSpace($env:WINDOWS_CERTIFICATE_PASSWORD)) {
+            throw "WINDOWS_CERTIFICATE_PASSWORD is required for a production release."
           }
           $certificate = Join-Path $env:RUNNER_TEMP "CopyPaste-signing.pfx"
-          [IO.File]::WriteAllBytes($certificate, [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE_BASE64))
-          $publish = Get-Item "artifacts/CopyPaste-*-win-x64" | Sort-Object LastWriteTime -Descending | Select-Object -First 1
-          ./tools/Sign-Artifacts.ps1 -Paths (Join-Path $publish.FullName "CopyPaste.App.exe") `
-            -CertificatePath $certificate -CertificatePassword $env:WINDOWS_CERTIFICATE_PASSWORD
-          $zip = "$($publish.FullName).zip"
-          Remove-Item -LiteralPath $zip -Force
-          Compress-Archive -Path (Join-Path $publish.FullName "*") -DestinationPath $zip -CompressionLevel Optimal
-          Remove-Item -LiteralPath $certificate -Force
+          try {
+            [IO.File]::WriteAllBytes($certificate, [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE_BASE64))
+            $publish = Get-Item "artifacts/CopyPaste-*-win-x64" | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+            ./tools/Sign-Artifacts.ps1 -Paths (Join-Path $publish.FullName "CopyPaste.App.exe") `
+              -CertificatePath $certificate -CertificatePassword $env:WINDOWS_CERTIFICATE_PASSWORD
+            $zip = "$($publish.FullName).zip"
+            Remove-Item -LiteralPath $zip -Force
+            Compress-Archive -Path (Join-Path $publish.FullName "*") -DestinationPath $zip -CompressionLevel Optimal
+          }
+          finally {
+            Remove-Item -LiteralPath $certificate -Force -ErrorAction SilentlyContinue
+          }
       - name: Install Inno Setup
         shell: pwsh
         run: choco install innosetup --yes --no-progress
       - name: Build Windows installer
         shell: pwsh
         run: ./tools/Build-Installer.ps1
-      - name: Sign installer when certificate is configured
+      - name: Sign installer
         shell: pwsh
         env:
           WINDOWS_CERTIFICATE_BASE64: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 }}
           WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
         run: |
-          if ([string]::IsNullOrWhiteSpace($env:WINDOWS_CERTIFICATE_BASE64)) { exit 0 }
           $certificate = Join-Path $env:RUNNER_TEMP "CopyPaste-signing.pfx"
-          [IO.File]::WriteAllBytes($certificate, [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE_BASE64))
-          $setup = Get-Item "artifacts/CopyPaste-*-Setup.exe" | Sort-Object LastWriteTime -Descending | Select-Object -First 1
-          ./tools/Sign-Artifacts.ps1 -Paths $setup.FullName -CertificatePath $certificate `
-            -CertificatePassword $env:WINDOWS_CERTIFICATE_PASSWORD
-          Remove-Item -LiteralPath $certificate -Force
+          try {
+            [IO.File]::WriteAllBytes($certificate, [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE_BASE64))
+            $setup = Get-Item "artifacts/CopyPaste-*-Setup.exe" | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+            ./tools/Sign-Artifacts.ps1 -Paths $setup.FullName -CertificatePath $certificate `
+              -CertificatePassword $env:WINDOWS_CERTIFICATE_PASSWORD
+          }
+          finally {
+            Remove-Item -LiteralPath $certificate -Force -ErrorAction SilentlyContinue
+          }
       - name: Build signed MSIX with modern Windows 11 context menu
         shell: pwsh
         env:
           WINDOWS_CERTIFICATE_BASE64: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 }}
           WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
         run: |
-          if ([string]::IsNullOrWhiteSpace($env:WINDOWS_CERTIFICATE_BASE64)) {
-            Write-Host "Signing certificate is not configured; skipping installable MSIX."
-            exit 0
-          }
           $certificate = Join-Path $env:RUNNER_TEMP "CopyPaste-msix.pfx"
-          [IO.File]::WriteAllBytes($certificate, [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE_BASE64))
-          ./tools/Build-Msix.ps1 -CertificatePath $certificate -CertificatePassword $env:WINDOWS_CERTIFICATE_PASSWORD
-          Remove-Item -LiteralPath $certificate -Force
+          try {
+            [IO.File]::WriteAllBytes($certificate, [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE_BASE64))
+            ./tools/Build-Msix.ps1 -CertificatePath $certificate -CertificatePassword $env:WINDOWS_CERTIFICATE_PASSWORD
+          }
+          finally {
+            Remove-Item -LiteralPath $certificate -Force -ErrorAction SilentlyContinue
+          }
       - name: Create GitHub Release
         shell: pwsh
         env:

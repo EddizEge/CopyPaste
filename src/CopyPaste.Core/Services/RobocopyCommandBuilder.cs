@@ -7,7 +7,7 @@ namespace CopyPaste.Core.Services;
 
 public static class RobocopyCommandBuilder
 {
-    public static ProcessStartInfo Build(CopyJob job)
+    public static ProcessStartInfo Build(CopyJob job, bool listOnly = false)
     {
         var info = new ProcessStartInfo
         {
@@ -41,6 +41,13 @@ public static class RobocopyCommandBuilder
         info.ArgumentList.Add("/FP");
         info.ArgumentList.Add("/TEE");
         info.ArgumentList.Add("/XJ");
+
+        if (listOnly)
+        {
+            info.ArgumentList.Add("/L");
+            info.ArgumentList.Add("/V");
+            info.ArgumentList.Add("/NP");
+        }
 
         if (job.ActivePerformanceMode == TransferPerformanceMode.LowResource)
             info.ArgumentList.Add("/IPG:25");

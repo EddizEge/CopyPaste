@@ -39,16 +39,16 @@ public partial class App : Application
         {
             var resultFile = commandLine[protectedSessionIndex + 1];
             var destination = GetArgumentValue(commandLine, "--destination");
-            var pickerWindow = new ProtectedFolderPickerWindow(resultFile);
+            var english = GetArgumentValue(commandLine, "--language")
+                ?.StartsWith("en", StringComparison.OrdinalIgnoreCase) == true;
+            var pickerWindow = new ProtectedFolderPickerWindow(resultFile, english);
             _window = pickerWindow;
-            pickerWindow.Closed += (_, _) =>
+            pickerWindow.Closed += async (_, _) =>
             {
                 try
                 {
-                    if (!File.Exists(resultFile))
-                        return;
-                    var source = File.ReadAllText(resultFile).Trim();
-                    if (!Path.IsPathFullyQualified(source))
+                    var sources = await ProtectedFolderPickerService.ReadResultAsync(resultFile);
+                    if (sources.Count == 0)
                         return;
                     var executable = Environment.ProcessPath
                         ?? throw new InvalidOperationException("Uygulama yolu belirlenemedi.");
@@ -58,7 +58,8 @@ public partial class App : Application
                         UseShellExecute = false
                     };
                     startInfo.ArgumentList.Add("--elevated-source");
-                    startInfo.ArgumentList.Add(source);
+                    foreach (var source in sources)
+                        startInfo.ArgumentList.Add(source);
                     if (!string.IsNullOrWhiteSpace(destination))
                     {
                         startInfo.ArgumentList.Add("--destination");
@@ -81,7 +82,9 @@ public partial class App : Application
             argument.Equals("--protected-folder-picker", StringComparison.OrdinalIgnoreCase));
         if (protectedPickerIndex >= 0 && protectedPickerIndex + 1 < commandLine.Length)
         {
-            _window = new ProtectedFolderPickerWindow(commandLine[protectedPickerIndex + 1]);
+            var english = GetArgumentValue(commandLine, "--language")
+                ?.StartsWith("en", StringComparison.OrdinalIgnoreCase) == true;
+            _window = new ProtectedFolderPickerWindow(commandLine[protectedPickerIndex + 1], english);
             _window.Activate();
             return;
         }
@@ -101,8 +104,11 @@ public partial class App : Application
             return;
         }
 
-        var elevatedSource = GetArgumentValue(commandLine, "--elevated-source");
-        if (string.IsNullOrWhiteSpace(elevatedSource))
+        var elevatedSources = GetArgumentValues(commandLine, "--elevated-source")
+            .Where(Path.IsPathFullyQualified)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        if (elevatedSources.Length == 0)
         {
             _mainInstance = AppInstance.FindOrRegisterForKey("CopyPaste.Main");
             if (!_mainInstance.IsCurrent)
@@ -122,14 +128,17 @@ public partial class App : Application
         _notificationService = new AppNotificationService();
         _notificationService.Initialize();
 
-        var shellRequest = string.IsNullOrWhiteSpace(elevatedSource)
+        var shellRequest = elevatedSources.Length == 0
             ? ShellLaunchRequestResolver.Resolve(commandLine, new ShellCopyStateStore())
             : new ShellLaunchRequest(
                 ShellLaunchMode.Normal,
-                elevatedSource,
+                elevatedSources[0],
                 GetArgumentValue(commandLine, "--destination"),
-                "Korumalı kaynak yönetici yetkisiyle açıldı. Sahiplik ve klasör izinleri değiştirilmedi.",
+                elevatedSources.Length == 1
+                    ? "Korumalı kaynak yönetici yetkisiyle açıldı. Sahiplik ve klasör izinleri değiştirilmedi."
+                    : $"{elevatedSources.Length} korumalı kaynak seçildi. Hedefi doğrulayıp kuyruğa ekleyin.",
                 false,
+                SourcePaths: elevatedSources,
                 UseBackupMode: true);
         if (shellRequest.ScheduleId is { } scheduleId)
         {
@@ -207,6 +216,22 @@ public partial class App : Application
         var index = Array.FindIndex(arguments, argument =>
             argument.Equals(name, StringComparison.OrdinalIgnoreCase));
         return index >= 0 && index + 1 < arguments.Length ? arguments[index + 1] : null;
+    }
+
+    private static IReadOnlyList<string> GetArgumentValues(string[] arguments, string name)
+    {
+        var index = Array.FindIndex(arguments, argument =>
+            argument.Equals(name, StringComparison.OrdinalIgnoreCase));
+        if (index < 0)
+            return [];
+        var values = new List<string>();
+        for (var valueIndex = index + 1; valueIndex < arguments.Length; valueIndex++)
+        {
+            if (arguments[valueIndex].StartsWith("--", StringComparison.Ordinal))
+                break;
+            values.Add(arguments[valueIndex]);
+        }
+        return values;
     }
 
     [DllImport("shell32.dll", SetLastError = true)]
