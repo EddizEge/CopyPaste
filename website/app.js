@@ -27,10 +27,13 @@ Object.assign(translations.en, {
 
 Object.assign(translations.tr, {
   codeSigningPolicy: "Code signing policy / Kod imzalama politikası",
-  privacyPolicy: "Gizlilik"
+  privacyPolicy: "Gizlilik",
+  signingNote: "Kod imzalama için SignPath Foundation açık kaynak sponsorluğuna başvurulmuştur."
 });
 Object.assign(translations.en, {
-  codeSigningPolicy: "Code signing policy", privacyPolicy: "Privacy"
+  codeSigningPolicy: "Code signing policy",
+  privacyPolicy: "Privacy",
+  signingNote: "CopyPaste has applied for SignPath Foundation open-source code-signing sponsorship."
 });
 translations.tr.trustOpen = "GitHub Releases";
 translations.en.trustOpen = "GitHub Releases";
