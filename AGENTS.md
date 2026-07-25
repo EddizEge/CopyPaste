@@ -131,19 +131,45 @@ Keep this roadmap available across separate tasks, but re-check the code before 
 - Optional USB-drive arrival trigger, idle/AC-power conditions, and clearer NAS/network resume state.
 - Updater progress, restart timing, and a safe rollback path.
 
-### 1.8 — safe one-way synchronization
+### 1.8 — safe one-way synchronization and Microsoft Store distribution
 
 - Visual source/destination diff for new, changed, missing, and conflicting items.
 - Deletion disabled by default; any deletion requires a mandatory preview and recoverable destination such as the Recycle Bin.
 - Reusable sync/backup profiles with understandable safety summaries.
+- Prepare CopyPaste for Microsoft Store distribution as the preferred trusted MSIX
+  channel: reserve the product in Partner Center, then use the exact Store-assigned
+  package identity, publisher ID, and publisher display name rather than inventing
+  or retaining development identities.
+- Produce and validate a Store-ready x64 MSIX/MSIX upload package that preserves the
+  native Windows 11 `IExplorerCommand` integration. Microsoft Store signing applies
+  only after certification; local or CI artifacts must never be described as
+  Store-signed.
+- Prepare semantically equivalent Turkish and English Store listing text, privacy
+  and support links, icons, screenshots, age/category answers, and release notes.
+- Run Release/x64 build and Core tests, package validation, local test-certificate
+  install/launch/uninstall/update checks, and final clean-profile Store package smoke
+  tests before submission. Do not publish the Partner Center submission without
+  explicit product-owner confirmation naming the specific version.
+- Keep GitHub/web distribution separate: Setup EXE, portable ZIP, and
+  `SHA256SUMS.txt` may continue only under the signing rules for that exact release.
+  The approved `v1.6.0`/`v1.7.0` unsigned exceptions do not extend to `v1.8.0`;
+  do not publish an unsigned MSIX outside Microsoft Store.
 
 ### Distribution work still outstanding
 
-- SignPath Foundation open-source sponsorship application submitted on July 23,
-  2026. When approved, integrate trustworthy signing into the first version then
-  under development; do not delay unrelated versions solely to wait for approval.
-- Authenticode certificate and trustworthy signing for production EXE/installer artifacts.
-- Signed MSIX distribution for the native Windows 11 context menu, or another supported modern context-menu deployment path.
+- SignPath Foundation open-source sponsorship application was submitted on July 23,
+  2026 and declined on July 24, 2026 because the project did not yet have enough
+  external public-trust and visibility signals. Reapply only after stronger,
+  verifiable adoption such as stars, forks, contributors, release downloads,
+  independent articles/videos/discussions, or institutional backing. A paid
+  SignPath subscription requires separate product-owner approval.
+- Complete the 1.8 Microsoft Store onboarding and Store-signed MSIX path for the
+  native Windows 11 context menu. Partner Center account creation, identity
+  verification, agreements, and any sensitive authentication steps remain
+  product-owner actions.
+- Authenticode certificate and trustworthy signing for production EXE/installer
+  artifacts distributed directly from GitHub or the website remains separate from
+  Microsoft Store signing.
 - Final installer/update smoke tests on a clean Windows user profile and a representative managed/company PC.
 
 ## Code review rules
