@@ -3,7 +3,7 @@
 ## Product and communication
 
 - CopyPaste is a Windows x64 desktop application that wraps the built-in Robocopy engine in a modern WinUI 3 interface. It targets .NET 8 and Windows 10 1809 or newer.
-- The repository is `EddizEge/CopyPaste`; the current stable baseline is `v1.5.1` unless the working tree, tags, or GitHub release state proves otherwise.
+- The repository is `EddizEge/CopyPaste`; the current stable baseline is `v1.7.0` unless the working tree, tags, or GitHub release state proves otherwise.
 - Speak with the product owner in Turkish unless they ask for another language. Keep technical names, commands, and code identifiers unchanged.
 - User-visible application text must support both Turkish and English through the existing localization approach. Do not add hard-coded one-language UI strings.
 - Keep the existing dark, compact, card-based visual language and purple accent palette. Preserve accessibility, keyboard use, scaling, and small-window behavior.
@@ -25,7 +25,27 @@ Keep reusable business logic in `CopyPaste.Core`. UI code should coordinate serv
 ## Safety and compatibility invariants
 
 - Copy operations must be non-destructive by default. Never introduce `/MIR`, `/PURGE`, `/MOVE`, `/MOV`, or equivalent deletion behavior into normal transfers. Any future synchronization deletion must be separately designed, previewed, opt-in, and recoverable.
+- Keep the planned deletion utility isolated from copy, retry, recovery, scheduling,
+  and synchronization flows. It may act only on targets the user explicitly selected
+  for that deletion operation; no transfer completion, profile, schedule, or command-line
+  argument may invoke it implicitly.
+- Ordinary deletion must default to the Recycle Bin when the target and volume support
+  it. Permanent deletion and best-effort secure erasure must be separate advanced modes
+  that are disabled by default and require an exact target preview, prominent bilingual
+  irreversible-action warnings, and a deliberate final confirmation. Never present any
+  overwrite method as guaranteed unrecoverable on SSD/NVMe/TRIM media, flash storage,
+  network/NAS shares, cloud-synced folders, snapshots, backups, journaled or copy-on-write
+  file systems, or storage with remapped sectors.
+- The deletion utility must refuse volume roots, Windows/system directories, the running
+  application's files, and ambiguous or unresolved paths. It must not traverse junctions,
+  symbolic links, mount points, or other reparse points outside the exact selected target.
+  Never terminate locking processes, schedule boot-time deletion, wipe free space, format
+  media, or clear snapshots automatically.
 - Never take ownership of a source, rewrite ACLs, or run `takeown`/`icacls` to bypass access restrictions. Protected transfers must retain the one-UAC elevated workflow and use Robocopy backup semantics such as `/ZB` without altering the source permissions.
+- Elevation in the deletion utility may address UAC-limited access only within the user's
+  existing Windows authorization. It must not take ownership, rewrite ACLs, bypass OS
+  protection, or claim it can delete an item that Windows still denies; report the exact
+  locked, in-use, authorization, reparse-point, or protected-path reason instead.
 - Preserve the allow-listed Robocopy argument builder. Use structured argument passing and correct Windows path quoting; never interpolate untrusted paths or free-form options into a shell command.
 - Preserve Unicode paths, deep paths, large file counts, cancellation, restartable copies, and streamed output. Do not buffer an entire large Robocopy log in memory or block the UI thread during enumeration, hashing, network waits, or transfers.
 - A Robocopy partial error is not a blanket transfer failure. Exit codes `8` through `15`, or parsed per-file failures, must remain `CompletedWithErrors`; show the failed paths and reasons and allow a focused retry. Exit code `16` or an unrecoverable launch/validation error is `Failed`.
@@ -92,6 +112,14 @@ both languages and the catalog has regression coverage for ordering, duplicate v
 
 Use a `vX.Y.Z` tag only after the Release build and tests pass. Tagged GitHub Actions must continue to produce the Setup EXE, portable ZIP, `SHA256SUMS.txt`, and the signed MSIX only when signing secrets are configured. Never claim artifacts are signed when no certificate was used.
 
+Starting with `v1.7.5`, every release must include a supported self-contained Windows x64
+portable ZIP alongside the Setup EXE and `SHA256SUMS.txt`. Extracting the ZIP and launching
+`CopyPaste.App.exe` must require no installation or administrator rights. Portable and
+installed artifacts must report the same version and share the same Core behavior, while
+installer/package-only integrations such as uninstall registration and packaged Explorer
+commands remain unavailable in portable mode. Release automation must fail rather than
+silently publish a release when the portable artifact or its SHA-256 entry is missing.
+
 `v1.6.0` and `v1.7.0` are product-owner-approved unsigned exceptions dated July 23,
 2026: for either version publish only the Setup EXE, portable ZIP, and
 `SHA256SUMS.txt`, prominently identify Setup/ZIP as Authenticode-unsigned, and do
@@ -130,6 +158,38 @@ Keep this roadmap available across separate tasks, but re-check the code before 
 - Full schedule management: list, edit, pause/resume, run now, and delete.
 - Optional USB-drive arrival trigger, idle/AC-power conditions, and clearer NAS/network resume state.
 - Updater progress, restart timing, and a safe rollback path.
+
+### 1.7.5 — controlled deletion and supported portable releases
+
+- Add a separate, clearly destructive file and folder deletion utility; do not add delete
+  switches to the normal Robocopy transfer engine and do not connect it to queued jobs,
+  schedules, retries, synchronization, or completion actions.
+- Provide three explicit modes: Recycle Bin deletion as the default; elevated permanent
+  deletion for UAC-limited targets when the current Windows account is authorized; and
+  opt-in best-effort secure file erasure that overwrites eligible regular-file content
+  before deletion. Explain locked/in-use, authorization, protected-path, and unsupported
+  storage failures without changing ownership or ACLs.
+- Before any destructive action, show resolved paths, item and byte totals, mode, storage
+  limitations, reparse-point handling, and whether recovery is expected to be possible.
+  Permanent modes require a second confirmation containing an exact localized phrase;
+  secure erasure must also make clear that copies, backups, snapshots, SSD wear-leveling,
+  TRIM, and remote storage can make a universal recovery guarantee impossible.
+- Secure erasure is limited to explicitly selected regular files on supported local volumes.
+  Directory traversal must be bounded to the selected tree, must not follow reparse points,
+  and must revalidate every target immediately before mutation. Free-space wiping is not
+  part of 1.7.5 because it is volume-wide, slow, wear-intensive, and cannot provide the
+  requested guarantee across modern storage.
+- Stream progress and per-item results, support cancellation between files and overwrite
+  passes, and report partially overwritten files honestly after cancellation or failure.
+  Keep a local, privacy-preserving result summary without uploading paths or logs.
+- Add regression coverage for path canonicalization, protected-root refusal, reparse-point
+  boundaries, confirmation requirements, storage capability classification, cancellation,
+  partial failures, and backward-compatible settings. Destructive integration tests may
+  use only disposable temporary data created by the test itself.
+- Formalize the existing no-install Windows x64 portable ZIP as a supported artifact for
+  `v1.7.5` and every later release. Verify clean extraction and launch, version parity,
+  SHA-256 publication, settings isolation expectations, update behavior, and clear notice
+  for integrations unavailable without installation or MSIX identity.
 
 ### 1.8 — safe one-way synchronization and Microsoft Store distribution
 

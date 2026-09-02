@@ -27,7 +27,7 @@ public sealed partial class MainWindow : Window
     private readonly SettingsStore _settingsStore = new();
     private readonly JobLogStore _jobLogStore = new();
     private readonly QueueStateStore _queueStateStore = new();
-    private readonly GitHubUpdateService _updateService = new();
+    private readonly GitHubUpdateService _updateService;
     private readonly UpdateDownloadService _updateDownloadService = new();
     private readonly UpdateRecoveryService _updateRecoveryService = new();
     private readonly FailedItemRetryService _failedItemRetryService;
@@ -40,6 +40,7 @@ public sealed partial class MainWindow : Window
     private readonly ExplorerIntegrationService _explorerIntegration = new();
     private readonly TrayIconService _trayIcon;
     private readonly AppWindow _appWindow;
+    private readonly bool _isPortable;
     private readonly ObservableCollection<QueueItemViewModel> _queue = [];
     private readonly ObservableCollection<CopyProfile> _profiles = new(CopyProfiles.All);
     private CancellationTokenSource? _copyCancellation;
@@ -71,9 +72,12 @@ public sealed partial class MainWindow : Window
     private readonly bool _startupScheduleRequiresAcPower;
     private readonly UsbDriveMonitor _usbDriveMonitor;
     private IReadOnlyList<string> _pendingMultiSourcePaths = [];
+    private DeletionToolView? _deletionToolView;
 
     public MainWindow(ShellLaunchRequest? shellRequest = null, AppNotificationService? notificationService = null)
     {
+        _isPortable = PortableDistributionDetector.IsPortable(AppContext.BaseDirectory);
+        _updateService = new GitHubUpdateService(preferPortable: _isPortable);
         InitializeComponent();
         _startupJob = shellRequest?.ScheduledJob;
         _useBackupModeForSource = shellRequest?.UseBackupMode == true;
@@ -176,6 +180,32 @@ public sealed partial class MainWindow : Window
     private async void CheckUpdatesButton_Click(object sender, RoutedEventArgs e) =>
         await CheckForUpdatesAsync(manual: true);
 
+    private void DeletionToolButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (DeletionWorkspace.Visibility == Visibility.Visible)
+        {
+            ShowTransferWorkspace();
+            return;
+        }
+        _deletionToolView ??= new DeletionToolView(
+            LocalizationService.IsEnglish(_language),
+            this,
+            ShowTransferWorkspace);
+        DeletionToolContent.Content = _deletionToolView;
+        TransferWorkspace.Visibility = Visibility.Collapsed;
+        DeletionWorkspace.Visibility = Visibility.Visible;
+        DeletionToolButton.Content = T("← Transferlere dön", "← Back to transfers");
+    }
+
+    private void ShowTransferWorkspace()
+    {
+        if (_deletionToolView is not null && !_deletionToolView.RequestNavigateAway())
+            return;
+        DeletionWorkspace.Visibility = Visibility.Collapsed;
+        TransferWorkspace.Visibility = Visibility.Visible;
+        DeletionToolButton.Content = T("Dosya silme", "File deletion");
+    }
+
     private async Task CheckForUpdatesAsync(bool manual)
     {
         if (_isUpdateCheckRunning)
@@ -198,7 +228,9 @@ public sealed partial class MainWindow : Window
                     _availableUpdateUri = result.DownloadUri ?? result.ReleasePageUri;
                     UpdateStatusText.Text = T($"Yeni sürüm hazır: {result.TagName}. Yüklü sürüm: {result.CurrentVersion.ToString(3)}.",
                         $"New version available: {result.TagName}. Installed: {result.CurrentVersion.ToString(3)}.");
-                    OpenUpdateButton.Content = T("İndir", "Download");
+                    OpenUpdateButton.Content = _isPortable
+                        ? T("Portable ZIP'i indir", "Download portable ZIP")
+                        : T("İndir", "Download");
                     OpenUpdateButton.Visibility = _availableUpdateUri is null
                         ? Visibility.Collapsed
                         : Visibility.Visible;
@@ -249,6 +281,13 @@ public sealed partial class MainWindow : Window
 
     private async void OpenUpdateButton_Click(object sender, RoutedEventArgs e)
     {
+        if (_isPortable && File.Exists(_downloadedUpdatePath))
+        {
+            var directory = Path.GetDirectoryName(_downloadedUpdatePath);
+            if (!string.IsNullOrWhiteSpace(directory) && Directory.Exists(directory))
+                Process.Start(new ProcessStartInfo(directory) { UseShellExecute = true });
+            return;
+        }
         if (_availableUpdate is null
             && !string.IsNullOrWhiteSpace(_pendingUpdateInstallPath)
             && File.Exists(_pendingUpdateInstallPath))
@@ -264,6 +303,8 @@ public sealed partial class MainWindow : Window
         }
         var updatePath = File.Exists(_downloadedUpdatePath) ? _downloadedUpdatePath : await DownloadUpdateAsync(update);
         if (string.IsNullOrWhiteSpace(updatePath))
+            return;
+        if (_isPortable)
             return;
 
         var timing = new ComboBox
@@ -373,9 +414,15 @@ public sealed partial class MainWindow : Window
         }
 
         _downloadedUpdatePath = download.FilePath;
-        UpdateStatusText.Text = T($"{update.TagName} indirildi ve SHA-256 ile doğrulandı.",
-            $"{update.TagName} downloaded and verified with SHA-256.");
-        OpenUpdateButton.Content = T("Kur ve yeniden başlat", "Install and restart");
+        UpdateStatusText.Text = _isPortable
+            ? T(
+                $"{update.TagName} portable ZIP indirildi ve SHA-256 ile doğrulandı. CopyPaste'i kapatıp ZIP'i yeni bir klasöre çıkarın.",
+                $"{update.TagName} portable ZIP was downloaded and verified with SHA-256. Close CopyPaste and extract the ZIP to a new folder.")
+            : T($"{update.TagName} indirildi ve SHA-256 ile doğrulandı.",
+                $"{update.TagName} downloaded and verified with SHA-256.");
+        OpenUpdateButton.Content = _isPortable
+            ? T("İndirilen klasörü aç", "Open download folder")
+            : T("Kur ve yeniden başlat", "Install and restart");
         OpenUpdateButton.IsEnabled = true;
         UpdateDownloadProgressBar.Visibility = Visibility.Collapsed;
         return download.FilePath;
@@ -383,6 +430,8 @@ public sealed partial class MainWindow : Window
 
     private async Task InitializeUpdateRecoveryAsync()
     {
+        if (_isPortable)
+            return;
         var state = await _updateRecoveryService.LoadAsync();
         if (state is null || state.Status == UpdateRecoveryStatus.RolledBack)
             return;
@@ -1250,6 +1299,11 @@ public sealed partial class MainWindow : Window
 
     private void RootGrid_DragOver(object sender, DragEventArgs e)
     {
+        if (DeletionWorkspace.Visibility == Visibility.Visible)
+        {
+            e.AcceptedOperation = DataPackageOperation.None;
+            return;
+        }
         if (e.DataView.Contains(StandardDataFormats.StorageItems))
         {
             e.AcceptedOperation = DataPackageOperation.Copy;
@@ -1339,6 +1393,13 @@ public sealed partial class MainWindow : Window
 
     private void AppWindow_Closing(AppWindow sender, AppWindowClosingEventArgs args)
     {
+        if (DeletionWorkspace.Visibility == Visibility.Visible
+            && _deletionToolView is not null
+            && !_deletionToolView.RequestNavigateAway())
+        {
+            args.Cancel = true;
+            return;
+        }
         if (!_isQueueRunning || _closeConfirmed)
             return;
 
@@ -1478,6 +1539,8 @@ public sealed partial class MainWindow : Window
 
     private async void RootGrid_Drop(object sender, DragEventArgs e)
     {
+        if (DeletionWorkspace.Visibility == Visibility.Visible)
+            return;
         if (!e.DataView.Contains(StandardDataFormats.StorageItems))
             return;
 
@@ -2437,6 +2500,9 @@ public sealed partial class MainWindow : Window
         ProfileComboBox.SelectedItem = _profiles.FirstOrDefault(profile => profile.Id == selectedProfileId) ?? _profiles[0];
         ApplyLanguageChoices();
         LocalizationService.Apply(Content, _language);
+        DeletionToolButton.Content = DeletionWorkspace.Visibility == Visibility.Visible
+            ? T("← Transferlere dön", "← Back to transfers")
+            : T("Dosya silme", "File deletion");
         CheckUpdatesButton.Content = T("Güncellemeleri kontrol et", "Check for updates");
         foreach (var item in _queue)
             item.SetLanguage(LocalizationService.IsEnglish(_language));

@@ -34,15 +34,18 @@ public sealed class GitHubUpdateService
     private readonly HttpClient _httpClient;
     private readonly string _owner;
     private readonly string _repository;
+    private readonly bool _preferPortable;
 
     public GitHubUpdateService(
         HttpClient? httpClient = null,
         string owner = ProductInfo.GitHubOwner,
-        string repository = ProductInfo.GitHubRepository)
+        string repository = ProductInfo.GitHubRepository,
+        bool preferPortable = false)
     {
         _httpClient = httpClient ?? new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
         _owner = owner;
         _repository = repository;
+        _preferPortable = preferPortable;
         if (!_httpClient.DefaultRequestHeaders.UserAgent.Any())
             _httpClient.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("CopyPaste", "1.3"));
         _httpClient.DefaultRequestHeaders.Accept.Add(
@@ -74,7 +77,7 @@ public sealed class GitHubUpdateService
                 .ConfigureAwait(false);
             using var document = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken)
                 .ConfigureAwait(false);
-            return ParseRelease(document.RootElement, currentVersion);
+            return ParseRelease(document.RootElement, currentVersion, _preferPortable);
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
@@ -111,7 +114,10 @@ public sealed class GitHubUpdateService
         return true;
     }
 
-    private static UpdateCheckResult ParseRelease(JsonElement root, Version currentVersion)
+    private static UpdateCheckResult ParseRelease(
+        JsonElement root,
+        Version currentVersion,
+        bool preferPortable)
     {
         if (!root.TryGetProperty("tag_name", out var tagElement)
             || !TryParseVersion(tagElement.GetString(), out var latestVersion))
@@ -122,8 +128,14 @@ public sealed class GitHubUpdateService
 
         var tagName = tagElement.GetString();
         var releasePage = TryGetUri(root, "html_url");
-        var asset = FindReleaseAsset(root, ProductInfo.InstallerAssetSuffix)
-            ?? FindReleaseAsset(root, ProductInfo.PortableAssetSuffix);
+        var preferredSuffix = preferPortable
+            ? ProductInfo.PortableAssetSuffix
+            : ProductInfo.InstallerAssetSuffix;
+        var fallbackSuffix = preferPortable
+            ? ProductInfo.InstallerAssetSuffix
+            : ProductInfo.PortableAssetSuffix;
+        var asset = FindReleaseAsset(root, preferredSuffix)
+            ?? FindReleaseAsset(root, fallbackSuffix);
         var download = asset?.DownloadUri ?? releasePage;
         var releaseNotes = root.TryGetProperty("body", out var body) ? body.GetString() : null;
         var status = latestVersion > NormalizeVersion(currentVersion)

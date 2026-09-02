@@ -33,6 +33,39 @@ public partial class App : Application
     protected override async void OnLaunched(Microsoft.UI.Xaml.LaunchActivatedEventArgs args)
     {
         var commandLine = Environment.GetCommandLineArgs();
+        var portableSmokeResult = GetArgumentValue(commandLine, "--portable-smoke-test");
+        if (portableSmokeResult is not null)
+        {
+            try
+            {
+                var fullResultPath = Path.GetFullPath(portableSmokeResult);
+                var tempRoot = Path.GetFullPath(Path.GetTempPath()).TrimEnd(Path.DirectorySeparatorChar)
+                    + Path.DirectorySeparatorChar;
+                if (!fullResultPath.StartsWith(tempRoot, StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidOperationException("Portable smoke-test output must stay in the temporary directory.");
+                var version = typeof(App).Assembly.GetName().Version?.ToString(3) ?? "unknown";
+                await File.WriteAllTextAsync(fullResultPath, version);
+            }
+            finally
+            {
+                Exit();
+            }
+            return;
+        }
+        if (await DeletionElevationService.TryHandleElevatedRequestAsync(commandLine))
+        {
+            Exit();
+            return;
+        }
+        if (commandLine.Any(argument =>
+                argument.Equals("--elevated-deletion-tool", StringComparison.OrdinalIgnoreCase)))
+        {
+            var english = GetArgumentValue(commandLine, "--language")
+                ?.StartsWith("en", StringComparison.OrdinalIgnoreCase) == true;
+            _window = new DeletionToolWindow(english);
+            _window.Activate();
+            return;
+        }
         var rollbackIndex = Array.FindIndex(commandLine, argument =>
             argument.Equals("--apply-update-rollback", StringComparison.OrdinalIgnoreCase));
         if (rollbackIndex >= 0)

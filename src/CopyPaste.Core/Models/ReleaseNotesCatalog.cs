@@ -10,6 +10,21 @@ public static class ReleaseNotesCatalog
 {
     public static IReadOnlyList<ReleaseNote> All { get; } =
     [
+        new("1.7.5", true,
+        [
+            "Ana uygulama menüsüne entegre edilen kontrollü silme bölümü; Geri Dönüşüm Kutusu, kalıcı silme ve desteklenen yerel NTFS dosyalarında isteğe bağlı en iyi çaba güvenli silme modları sunuyor.",
+            "Silme önizlemesi; çözümlenmiş hedefleri, öğe ve boyut toplamlarını, korunan yolları, reparse point sınırlarını ve depolama kısıtlarını işlemden önce doğruluyor.",
+            "Kalıcı işlemler çift onay gerektiriyor; uygulama sahiplik veya ACL değiştirmiyor ve SSD/TRIM, NAS, bulut, yedek ya da snapshot bulunan ortamlarda kurtarılamazlık garantisi vermiyor.",
+            "Kurulumsuz Windows x64 portable ZIP, 1.7.5 ve sonraki sürümlerde Setup ile aynı sürümü taşıyan ve SHA-256 listesine dahil edilen desteklenen bir yayın paketi oluyor.",
+            "Portable çalışmada güncelleyici Setup yerine portable ZIP'i seçiyor, SHA-256 doğrulamasından sonra güvenli elle çıkarma için indirilen klasörü açıyor."
+        ],
+        [
+            "A controlled deletion section integrated into the main application menu provides Recycle Bin, permanent deletion, and optional best-effort secure erasure modes for supported local NTFS files.",
+            "The deletion preview validates resolved targets, item and byte totals, protected paths, reparse-point boundaries, and storage limitations before execution.",
+            "Permanent operations require two confirmations; the app does not change ownership or ACLs and makes no unrecoverability guarantee for SSD/TRIM, NAS, cloud, backup, or snapshot-backed storage.",
+            "The no-install Windows x64 portable ZIP becomes a supported release package in 1.7.5 and later, matching the Setup version and appearing in the SHA-256 list.",
+            "When running portably, the updater selects the portable ZIP instead of Setup and opens the download folder for safe manual extraction after SHA-256 verification."
+        ]),
         new("1.7.0", false,
         [
             "Zamanlanmış transferler düzenlenebilir, duraklatılıp yeniden etkinleştirilebilir, hemen çalıştırılabilir ve silinebilir.",

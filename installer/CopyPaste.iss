@@ -1,8 +1,8 @@
 #ifndef AppVersion
-  #define AppVersion "1.7.0"
+  #define AppVersion "1.7.5"
 #endif
 #ifndef SourceDir
-  #define SourceDir "..\artifacts\CopyPaste-1.7.0-win-x64"
+  #define SourceDir "..\artifacts\CopyPaste-1.7.5-win-x64"
 #endif
 #ifndef OutputDir
   #define OutputDir "..\artifacts"
@@ -59,7 +59,7 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 Name: "explorer"; Description: "CopyPaste Explorer sağ tık menülerini etkinleştir"; GroupDescription: "Windows entegrasyonu:"; Flags: checkedonce
 
 [Files]
-Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#SourceDir}\*"; DestDir: "{app}"; Excludes: "CopyPaste.Portable"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{autoprograms}\CopyPaste"; Filename: "{app}\CopyPaste.App.exe"

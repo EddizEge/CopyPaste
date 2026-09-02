@@ -4,6 +4,8 @@ using System.Net;
 using System.Text;
 using System.Text.Json;
 using System.Security.Cryptography;
+using System.Runtime.InteropServices;
+using Microsoft.Win32.SafeHandles;
 
 var failures = new List<string>();
 
@@ -16,7 +18,7 @@ Assert(RobocopyRunner.CreateResult(16).Status == CopyJobStatus.Failed,
     "Exit 16 ciddi hata olarak başarısız olmalı");
 Assert(!new RobocopyResult(-1, CopyJobStatus.Cancelled, "iptal").IsSuccessful,
     "İptal sonucu başarılı sayılmamalı");
-Assert(ReleaseNotesCatalog.All is [{ Version: "1.7.0", IsPreview: false }, { Version: "1.6.0", IsPreview: false }, ..]
+Assert(ReleaseNotesCatalog.All is [{ Version: "1.7.5", IsPreview: true }, { Version: "1.7.0", IsPreview: false }, ..]
        && ReleaseNotesCatalog.All.Select(note => note.Version).Distinct(StringComparer.OrdinalIgnoreCase).Count()
           == ReleaseNotesCatalog.All.Count
        && ReleaseNotesCatalog.All.All(note => note.TurkishChanges.Count > 0
@@ -64,7 +66,8 @@ var releaseJson = """
     },
     {
       "name": "CopyPaste-1.2.0-win-x64.zip",
-      "browser_download_url": "https://github.com/EddizEge/CopyPaste/releases/download/v1.2.0/CopyPaste-1.2.0-win-x64.zip"
+      "browser_download_url": "https://github.com/EddizEge/CopyPaste/releases/download/v1.2.0/CopyPaste-1.2.0-win-x64.zip",
+      "digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
     }
   ]
 }
@@ -78,6 +81,15 @@ Assert(availableUpdate.HasUpdate
        && availableUpdate.AssetName == "CopyPaste-1.2.0-Setup.exe"
        && availableUpdate.Sha256Digest?.StartsWith("sha256:") == true,
     "Yeni GitHub Release içinde kurulum dosyası ZIP paketine tercih edilmeli");
+var portableUpdateService = new GitHubUpdateService(
+    new HttpClient(new StubHttpMessageHandler(HttpStatusCode.OK, releaseJson)),
+    preferPortable: true);
+var portableUpdate = await portableUpdateService.CheckAsync(new Version(1, 1, 0));
+Assert(portableUpdate.HasUpdate
+       && portableUpdate.DownloadUri?.AbsoluteUri.EndsWith("CopyPaste-1.2.0-win-x64.zip") == true
+       && portableUpdate.AssetName == "CopyPaste-1.2.0-win-x64.zip"
+       && portableUpdate.Sha256Digest?.EndsWith(new string('b', 64), StringComparison.Ordinal) == true,
+    "Portable çalışmada ZIP paketi Setup dosyasına tercih edilmeli");
 var currentUpdate = await updateService.CheckAsync(new Version(1, 2, 0));
 Assert(currentUpdate.Status == UpdateCheckStatus.UpToDate,
     "Aynı sürüm güncel kabul edilmeli");
@@ -96,10 +108,187 @@ var tempSource = Path.Combine(Path.GetTempPath(), "CopyPasteTests", Guid.NewGuid
 var tempDestination = tempSource + "-destination";
 var shellStateDirectory = tempSource + "-shell-state";
 var storeDirectory = tempSource + "-stores";
+var deletionTestRoot = tempSource + "-deletion-tests";
 Directory.CreateDirectory(tempSource);
+var portableDetectionRoot = tempSource + "-portable-detection";
+Directory.CreateDirectory(portableDetectionRoot);
+Assert(!PortableDistributionDetector.IsPortable(portableDetectionRoot),
+    "Dağıtım işareti bulunmayan klasör kurulu çalışma kabul edilmeli");
+await File.WriteAllTextAsync(
+    Path.Combine(portableDetectionRoot, ProductInfo.PortableMarkerFileName), "portable");
+Assert(PortableDistributionDetector.IsPortable(portableDetectionRoot),
+    "Portable dağıtım işareti bulunan klasör portable çalışma olarak algılanmalı");
 
 try
 {
+    var deletionRoot = Path.Combine(deletionTestRoot, "silme-araçları-ğüşi");
+    var deletionProtected = Path.Combine(deletionTestRoot, "protected-root");
+    var deletionApp = Path.Combine(deletionTestRoot, "running-app");
+    Directory.CreateDirectory(deletionRoot);
+    Directory.CreateDirectory(deletionProtected);
+    Directory.CreateDirectory(deletionApp);
+    var nestedDeletionDirectory = Path.Combine(deletionRoot, "iç içe", "alt");
+    Directory.CreateDirectory(nestedDeletionDirectory);
+    var firstDeletionFile = Path.Combine(deletionRoot, "rapor-çözüldü.txt");
+    var nestedDeletionFile = Path.Combine(nestedDeletionDirectory, "uzun-adlı-dosya.bin");
+    await File.WriteAllTextAsync(firstDeletionFile, "CopyPaste deletion test");
+    await File.WriteAllBytesAsync(nestedDeletionFile, new byte[4097]);
+    var deletionPlanner = new DeletionPlanner(deletionProtected, deletionApp);
+    var permanentPlan = deletionPlanner.Create(
+        [deletionRoot, nestedDeletionDirectory], DeletionMode.Permanent);
+    Assert(permanentPlan.IsValid
+           && permanentPlan.RequestedPaths.SequenceEqual([deletionRoot], StringComparer.OrdinalIgnoreCase)
+           && permanentPlan.FileCount == 2
+           && permanentPlan.DirectoryCount == 3
+           && permanentPlan.TotalBytes == new FileInfo(firstDeletionFile).Length + 4097,
+        "Silme önizlemesi iç içe seçimleri tekilleştirip Unicode dosya ve klasörleri saymalı");
+    var recursiveDeleteResult = await new DeletionService(deletionPlanner).ExecuteAsync(permanentPlan);
+    Assert(recursiveDeleteResult.Succeeded && !Directory.Exists(deletionRoot),
+        "Kalıcı silme önizlenmiş geçici klasör ağacını revalidation sonrasında alttan üste silebilmeli");
+
+    var protectedFile = Path.Combine(deletionProtected, "korunan.txt");
+    await File.WriteAllTextAsync(protectedFile, "protected");
+    var protectedPlan = deletionPlanner.Create([protectedFile], DeletionMode.Permanent);
+    Assert(!protectedPlan.IsValid
+           && protectedPlan.Issues.Any(issue => issue.Code == DeletionIssueCode.ProtectedPath),
+        "Silme önizlemesi korunan dizinlerin altındaki hedefleri reddetmeli");
+
+    var rootPlan = deletionPlanner.Create([Path.GetPathRoot(tempSource)!], DeletionMode.Permanent);
+    Assert(!rootPlan.IsValid && rootPlan.Issues.Any(issue => issue.Code == DeletionIssueCode.VolumeRoot),
+        "Silme önizlemesi birim köklerini reddetmeli");
+
+    var changedFile = Path.Combine(deletionTestRoot, "preview-sonrası-değişti.bin");
+    await File.WriteAllBytesAsync(changedFile, [1, 2, 3]);
+    var changedPlan = deletionPlanner.Create([changedFile], DeletionMode.Permanent);
+    var changedPlanFingerprint = DeletionPlanFingerprint.Create(changedPlan);
+    await File.AppendAllTextAsync(changedFile, "changed after preview");
+    var refreshedChangedPlan = deletionPlanner.Create([changedFile], DeletionMode.Permanent);
+    var changedResult = await new DeletionService(deletionPlanner).ExecuteAsync(changedPlan);
+    Assert(changedResult.FailedCount == 1
+           && changedResult.Items[0].ErrorCode == DeletionIssueCode.ChangedAfterPreview
+           && File.Exists(changedFile),
+        "Önizlemeden sonra değişen hedef yeniden doğrulanmalı ve silinmemeli");
+    Assert(changedPlanFingerprint != DeletionPlanFingerprint.Create(refreshedChangedPlan),
+        "UAC aracısına aktarılan silme planı parmak izi önizleme sonrası değişiklikleri yakalamalı");
+
+    var elevatedDirectory = Path.Combine(deletionTestRoot, "uac-plan-drift");
+    Directory.CreateDirectory(elevatedDirectory);
+    await File.WriteAllTextAsync(Path.Combine(elevatedDirectory, "önizlenen.txt"), "first");
+    var elevatedPlan = deletionPlanner.Create([elevatedDirectory], DeletionMode.Permanent);
+    var elevatedPlanFingerprint = DeletionPlanFingerprint.Create(elevatedPlan);
+    await File.WriteAllTextAsync(Path.Combine(elevatedDirectory, "sonradan-eklenen.txt"), "second");
+    var refreshedElevatedPlan = deletionPlanner.Create([elevatedDirectory], DeletionMode.Permanent);
+    Assert(elevatedPlanFingerprint != DeletionPlanFingerprint.Create(refreshedElevatedPlan)
+           && Directory.Exists(elevatedDirectory),
+        "UAC öncesi klasöre eklenen yeni hedef yükseltilmiş işlem planını geçersiz kılmalı");
+
+    var permanentFile = Path.Combine(deletionTestRoot, "salt-okunur.txt");
+    await File.WriteAllTextAsync(permanentFile, "delete me");
+    File.SetAttributes(permanentFile, File.GetAttributes(permanentFile) | FileAttributes.ReadOnly);
+    var directDeletePlan = deletionPlanner.Create([permanentFile], DeletionMode.Permanent);
+    var directDeleteResult = await new DeletionService(deletionPlanner).ExecuteAsync(directDeletePlan);
+    Assert(directDeleteResult.Succeeded && !File.Exists(permanentFile),
+        "Kalıcı silme yalnızca seçilmiş geçici salt-okunur dosyanın özniteliğini temizleyip silebilmeli");
+
+    var lockedFile = Path.Combine(deletionTestRoot, "kullanımda.txt");
+    await File.WriteAllTextAsync(lockedFile, "locked");
+    var lockedPlan = deletionPlanner.Create([lockedFile], DeletionMode.Permanent);
+    await using (var lockStream = new FileStream(lockedFile, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+    {
+        var lockedResult = await new DeletionService(deletionPlanner).ExecuteAsync(lockedPlan);
+        Assert(lockedResult.FailedCount == 1
+               && lockedResult.Items[0].ErrorCode == DeletionIssueCode.InUse
+               && File.Exists(lockedFile),
+            "Kullanımdaki dosya zorla kapatılmadan öğe bazlı hata olarak raporlanmalı");
+    }
+
+    var hardLinkTarget = Path.Combine(deletionTestRoot, "hard-link-target.bin");
+    var hardLinkAlias = Path.Combine(deletionTestRoot, "hard-link-alias.bin");
+    await File.WriteAllBytesAsync(hardLinkTarget, [4, 5, 6, 7]);
+    Assert(NativeFileMethods.CreateHardLink(hardLinkAlias, hardLinkTarget, IntPtr.Zero),
+        "Hard link güvenlik testi için geçici bağlantı oluşturulabilmeli");
+    if (File.Exists(hardLinkAlias))
+    {
+        var hardLinkPlan = deletionPlanner.Create([hardLinkTarget], DeletionMode.SecureErase);
+        Assert(!hardLinkPlan.IsValid
+               && hardLinkPlan.Issues.Any(issue => issue.Code == DeletionIssueCode.MultipleHardLinks),
+            "Güvenli silme başka bir yolu da bozabilecek hard link hedeflerini reddetmeli");
+    }
+
+    var reparseOutside = Path.Combine(deletionTestRoot, "reparse-outside");
+    var reparseSelectedRoot = Path.Combine(deletionTestRoot, "reparse-selected");
+    var junctionPath = Path.Combine(reparseSelectedRoot, "linked-folder");
+    var outsideFile = Path.Combine(reparseOutside, "outside-must-survive.txt");
+    Directory.CreateDirectory(reparseOutside);
+    Directory.CreateDirectory(reparseSelectedRoot);
+    await File.WriteAllTextAsync(outsideFile, "must not be traversed");
+    Assert(NativeFileMethods.CreateJunction(junctionPath, reparseOutside),
+        "Reparse-point sınır testi için geçici junction oluşturulabilmeli");
+    if (Directory.Exists(junctionPath)
+        && (File.GetAttributes(junctionPath) & FileAttributes.ReparsePoint) != 0)
+    {
+        var junctionPlan = deletionPlanner.Create([reparseSelectedRoot], DeletionMode.Permanent);
+        Assert(junctionPlan.IsValid
+               && junctionPlan.Entries.Any(entry => entry.Path == junctionPath
+                   && entry.Kind == DeletionEntryKind.ReparsePoint)
+               && junctionPlan.Entries.All(entry => !entry.Path.Equals(
+                   outsideFile, StringComparison.OrdinalIgnoreCase)),
+            "Silme önizlemesi junction hedefinin içine girmeden bağlantıyı sınır olarak planlamalı");
+        var junctionResult = await new DeletionService(deletionPlanner).ExecuteAsync(junctionPlan);
+        Assert(junctionResult.Succeeded
+               && !Directory.Exists(reparseSelectedRoot)
+               && File.Exists(outsideFile),
+            "Kalıcı silme junction bağlantısını kaldırmalı ancak bağlantı dışındaki hedef veriye dokunmamalı");
+    }
+
+    var secureFile = Path.Combine(deletionTestRoot, "güvenli-silme.bin");
+    await File.WriteAllBytesAsync(secureFile, RandomNumberGenerator.GetBytes(1024 * 1024 + 17));
+    var securePlan = deletionPlanner.Create([secureFile], DeletionMode.SecureErase);
+    Assert(securePlan.IsValid && securePlan.FileCount == 1,
+        "Yerel sabit NTFS birimindeki normal dosya güvenli silme için planlanabilmeli");
+    if (securePlan.IsValid)
+    {
+        var secureProgressSeen = false;
+        var secureResult = await new DeletionService(deletionPlanner).ExecuteAsync(
+            securePlan, new InlineProgress<DeletionProgress>(_ => secureProgressSeen = true));
+        Assert(secureResult.Succeeded && secureProgressSeen && !File.Exists(secureFile),
+            "Güvenli silme geçici dosyayı akış halinde üzerine yazıp kaldırmalı");
+    }
+
+
+    var cancelDuringOverwriteFile = Path.Combine(deletionTestRoot, "üzerine-yazarken-iptal.bin");
+    await File.WriteAllBytesAsync(cancelDuringOverwriteFile, new byte[8 * 1024 * 1024]);
+    var cancelDuringOverwritePlan = deletionPlanner.Create(
+        [cancelDuringOverwriteFile], DeletionMode.SecureErase);
+    if (cancelDuringOverwritePlan.IsValid)
+    {
+        using var overwriteCancellation = new CancellationTokenSource();
+        var cancelDuringOverwriteResult = await new DeletionService(deletionPlanner).ExecuteAsync(
+            cancelDuringOverwritePlan,
+            new InlineProgress<DeletionProgress>(value =>
+            {
+                if (value.Pass == 1 && value.ProcessedBytes > 0)
+                    overwriteCancellation.Cancel();
+            }),
+            overwriteCancellation.Token);
+        Assert(cancelDuringOverwriteResult.WasCanceled
+               && cancelDuringOverwriteResult.Items is [{ Succeeded: false, PartiallyOverwritten: true }]
+               && File.Exists(cancelDuringOverwriteFile),
+            "Güvenli silme sırasında iptal dosyayı silmemeli ve kısmi üzerine yazmayı açıkça raporlamalı");
+    }
+
+    var canceledFile = Path.Combine(deletionTestRoot, "iptal-edildi.txt");
+    await File.WriteAllTextAsync(canceledFile, "keep me");
+    var canceledPlan = deletionPlanner.Create([canceledFile], DeletionMode.Permanent);
+    using (var canceledSource = new CancellationTokenSource())
+    {
+        canceledSource.Cancel();
+        var canceledResult = await new DeletionService(deletionPlanner)
+            .ExecuteAsync(canceledPlan, cancellationToken: canceledSource.Token);
+        Assert(canceledResult.WasCanceled && File.Exists(canceledFile),
+            "Başlamadan iptal edilen silme işlemi hedefe dokunmamalı");
+    }
+
     Assert(CopyJobValidator.Validate(tempSource, tempSource).IsValid == false, "Aynı yollar reddedilmeli");
     Assert(CopyJobValidator.Validate(tempSource, Path.Combine(tempSource, "child")).IsValid == false, "İç içe yollar reddedilmeli");
     Assert(CopyJobValidator.Validate(tempSource, tempDestination).IsValid, "Bağımsız yollar kabul edilmeli");
@@ -841,6 +1030,16 @@ try
     Assert(history.Count == 1 && history[0].Id == job.Id, "Geçmiş aynı işi çoğaltmadan güncellemeli");
     await historyStore.ClearAsync();
     Assert((await historyStore.LoadAsync()).Count == 0, "Transfer geçmişi temizlenebilmeli");
+
+    var deletionHistoryStore = new DeletionHistoryStore(storeDirectory);
+    var deletionHistoryEntry = new DeletionHistoryEntry(
+        Guid.NewGuid(), DateTimeOffset.UtcNow, DeletionMode.Permanent, 2, 1, 1, 4097, false);
+    await deletionHistoryStore.AddAsync(deletionHistoryEntry);
+    var deletionHistory = await deletionHistoryStore.LoadAsync();
+    var deletionHistoryJson = await File.ReadAllTextAsync(Path.Combine(storeDirectory, "deletion-history.json"));
+    Assert(deletionHistory is [{ RequestedTargetCount: 2, SucceededCount: 1, FailedCount: 1 }]
+           && !deletionHistoryJson.Contains(tempSource, StringComparison.OrdinalIgnoreCase),
+        "Silme geçmişi yalnızca gizlilik koruyan sayısal özeti saklamalı, hedef yollarını yazmamalı");
 }
 finally
 {
@@ -851,6 +1050,10 @@ finally
         Directory.Delete(shellStateDirectory, true);
     if (Directory.Exists(storeDirectory))
         Directory.Delete(storeDirectory, true);
+    if (Directory.Exists(deletionTestRoot))
+        Directory.Delete(deletionTestRoot, true);
+    if (Directory.Exists(portableDetectionRoot))
+        Directory.Delete(portableDetectionRoot, true);
 }
 
 if (args.Contains("--stress", StringComparer.OrdinalIgnoreCase))
@@ -945,4 +1148,68 @@ sealed class ByteStubHttpMessageHandler(byte[] content) : HttpMessageHandler
 sealed class InlineProgress<T>(Action<T> handler) : IProgress<T>
 {
     public void Report(T value) => handler(value);
+}
+
+static class NativeFileMethods
+{
+    [DllImport("kernel32.dll", EntryPoint = "CreateHardLinkW", CharSet = CharSet.Unicode,
+        SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool CreateHardLink(string fileName, string existingFileName, IntPtr securityAttributes);
+
+    public static bool CreateJunction(string junctionPath, string targetDirectory)
+    {
+        Directory.CreateDirectory(junctionPath);
+        using var handle = CreateFile(
+            junctionPath,
+            0x40000000,
+            0x00000001 | 0x00000002 | 0x00000004,
+            IntPtr.Zero,
+            3,
+            0x02000000 | 0x00200000,
+            IntPtr.Zero);
+        if (handle.IsInvalid)
+            return false;
+
+        var target = Path.GetFullPath(targetDirectory).TrimEnd(Path.DirectorySeparatorChar);
+        var substituteName = Encoding.Unicode.GetBytes(@"\??\" + target);
+        var printName = Encoding.Unicode.GetBytes(target);
+        var reparseDataLength = substituteName.Length + printName.Length + 12;
+        var buffer = new byte[reparseDataLength + 8];
+        BitConverter.GetBytes(0xA0000003u).CopyTo(buffer, 0);
+        BitConverter.GetBytes((ushort)reparseDataLength).CopyTo(buffer, 4);
+        BitConverter.GetBytes((ushort)0).CopyTo(buffer, 8);
+        BitConverter.GetBytes((ushort)substituteName.Length).CopyTo(buffer, 10);
+        BitConverter.GetBytes((ushort)(substituteName.Length + 2)).CopyTo(buffer, 12);
+        BitConverter.GetBytes((ushort)printName.Length).CopyTo(buffer, 14);
+        substituteName.CopyTo(buffer, 16);
+        printName.CopyTo(buffer, 16 + substituteName.Length + 2);
+        var success = DeviceIoControl(handle, 0x000900A4, buffer, buffer.Length,
+            IntPtr.Zero, 0, out _, IntPtr.Zero);
+        if (!success)
+            Directory.Delete(junctionPath);
+        return success;
+    }
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern SafeFileHandle CreateFile(
+        string fileName,
+        uint desiredAccess,
+        uint shareMode,
+        IntPtr securityAttributes,
+        uint creationDisposition,
+        uint flagsAndAttributes,
+        IntPtr templateFile);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool DeviceIoControl(
+        SafeFileHandle device,
+        uint controlCode,
+        [In] byte[] inputBuffer,
+        int inputBufferSize,
+        IntPtr outputBuffer,
+        int outputBufferSize,
+        out int bytesReturned,
+        IntPtr overlapped);
 }

@@ -1,5 +1,16 @@
 # Değişiklik günlüğü
 
+## 1.7.5 — geliştirme aşamasında
+
+- Ana uygulama menüsüne entegre, normal transferlerden ve zamanlamalardan işlevsel olarak tamamen ayrılmış kontrollü dosya/klasör silme bölümü eklendi.
+- Geri Dönüşüm Kutusu, kalıcı silme ve desteklenen yerel sabit NTFS dosyalarında üç geçişli best-effort güvenli silme modları eklendi.
+- Silmeden önce yol kanonikleştirme, iç içe seçim tekilleştirme, öğe/boyut özeti, disk kökü ve Windows/uygulama dizini koruması, reparse point sınırı ve işlem anında yeniden doğrulama eklendi.
+- Kalıcı modlara yerelleştirilmiş açık uyarı ve tam ifade gerektiren ikinci onay; UAC kısıtlı hedefler için ACL/sahiplik değiştirmeyen yönetici akışı eklendi.
+- Güvenli silmenin SSD/TRIM, NAS, bulut, yedek, snapshot, hard link, sıkıştırılmış ve sparse dosyalardaki sınırları açıkça gösteriliyor; disk geneli boş alan silme uygulanmıyor.
+- İptal ve öğe bazlı kısmi sonuçlar, kısmen üzerine yazılmış dosyalar için yanıltıcı olmayan durumlarla raporlanıyor.
+- Windows x64 portable ZIP gerçek self-contained yayın olarak üretilecek, sessiz açılış smoke testinden geçecek ve 1.7.5 sonrası her sürümde SHA-256 listesine zorunlu olarak eklenecek.
+- Portable çalışma işaretçisi ve paket seçimi eklendi; uygulama içi güncelleyici portable kullanımda Setup yerine SHA-256 doğrulamalı ZIP indirip güvenli elle çıkarma için klasörünü açıyor.
+
 ## 1.7.0
 
 - Zamanlanmış transfer yönetimi genişletildi: kayıtlı görevler düzenlenebilir, duraklatılıp yeniden etkinleştirilebilir, hemen çalıştırılabilir ve silinebilir.

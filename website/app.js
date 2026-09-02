@@ -13,7 +13,10 @@ Object.assign(translations.tr, {
   featureRecoveryBody: "Binlerce dosya içindeki yalnızca hatalı öğeleri görün ve yeniden deneyin.",
   featureSchedule: "Zamanlama ve ağ desteği",
   featureScheduleBody: "Günlük görevler oluşturun; NAS veya ağ bağlantısı geri geldiğinde devam edin.",
-  updateNote: "↻ Güncellemeler GitHub Releases üzerinden SHA-256 ile doğrulanarak güvenle indirilir."
+  featureDeletion: "Kontrollü silme (1.7.5)",
+  featureDeletionBody: "Ana menüdeki ayrı bölümde önce hedefleri görün; Geri Dönüşüm Kutusu varsayılanını veya açıkça onaylanan kalıcı seçenekleri kullanın.",
+  faqDeleteAnswer: "Normal transferler dosya silmez; MIR ve PURGE kapalıdır. 1.7.5 ile ana menüye eklenen ayrı kontrollü silme bölümü yalnızca açıkça seçip önizlediğiniz hedefleri işler.",
+  updateNote: "↻ Güncellemeler GitHub Releases üzerinden SHA-256 ile doğrulanır; kurulumda Setup, portable çalışmada ZIP seçilir."
 });
 
 Object.assign(translations.en, {
@@ -22,7 +25,10 @@ Object.assign(translations.en, {
   featureRecoveryBody: "Find and retry only the failed items among thousands of files.",
   featureSchedule: "Scheduling and network support",
   featureScheduleBody: "Create daily tasks and continue when a NAS or network connection returns.",
-  updateNote: "↻ Updates are securely downloaded from GitHub Releases and verified with SHA-256."
+  featureDeletion: "Controlled deletion (1.7.5)",
+  featureDeletionBody: "Preview targets in a dedicated main-menu section, then use the default Recycle Bin mode or explicitly confirmed permanent options.",
+  faqDeleteAnswer: "Normal transfers never delete files; MIR and PURGE remain disabled. The separate controlled deletion section arriving in 1.7.5 processes only targets you explicitly select and preview.",
+  updateNote: "↻ GitHub Release updates are verified with SHA-256; installed builds select Setup and portable builds select ZIP."
 });
 
 Object.assign(translations.tr, {

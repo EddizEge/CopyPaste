@@ -6,17 +6,22 @@ CopyPaste, [MIT License](LICENSE) ile açık kaynak olarak yayımlanır. Ayrınt
 [Code signing policy](CODE_SIGNING_POLICY.md) ve [gizlilik politikası](PRIVACY.md)
 belgelerine bakabilirsiniz.
 
-## CopyPaste 1.7.0 sürüm hazırlığı
+## CopyPaste 1.7.5 geliştirme önizlemesi
 
-- Kayıtlı görevleri düzenleme, duraklatma/devam ettirme, hemen çalıştırma ve silme
-- USB sürücüsü bağlandığında birim kimliğiyle görev başlatma ve isteğe bağlı AC güç koşulu
-- Sürümlü, atomik ve yedekli kuyruk checkpoint'leri ile periyodik ilerleme kaydı
-- NAS/ağ bekleme durumu, erişilemeyen yol, geri sayım, anlık yeniden deneme ve sınırlı otomatik devam
-- Güncelleme ilerleme çubuğu, esnek yeniden başlatma zamanı ve standart kurulum için doğrulanmış yerel geri dönüş
-- `v1.7.0` için Setup/ZIP dosyalarında açık uyarı ve SHA-256 doğrulamalı geçici imzasız yayın istisnası; imzasız MSIX yayımlanmaz
+- Ana uygulama menüsüne entegre, normal transferlerden işlevsel olarak ayrılmış kontrollü dosya ve klasör silme bölümü
+- Varsayılan Geri Dönüşüm Kutusu, kalıcı silme ve desteklenen yerel NTFS dosyalarında
+  üç geçişli best-effort güvenli silme modları
+- Disk kökü, Windows/uygulama dizini, hard link ve reparse point güvenlik sınırları;
+  kalıcı modlarda çift onay ve gerektiğinde ACL değiştirmeyen UAC akışı
+- SSD/TRIM, NAS, bulut, yedek ve snapshot ortamlarında kurtarılamazlık garantisi
+  verilemeyeceğini belirten Türkçe/İngilizce uyarılar
+- Kurulum gerektirmeyen gerçek self-contained Windows x64 portable ZIP ve sessiz
+  paket smoke testi
+- Kurulu kullanımda Setup'ı, portable kullanımda SHA-256 doğrulamalı ZIP'i seçen
+  dağıtım biçimine duyarlı güncelleme akışı
 
-Bu depo artık `1.7.0` sürüm metadatasını taşır; yayımlanmış kararlı sürüm tag ve
-GitHub Release tamamlanana kadar `v1.6.0` olarak kalır.
+Bu depo `1.7.5` geliştirme metadatasını taşır. Yayımlanmış kararlı sürüm `v1.7.0`'dır;
+`v1.7.5` için henüz yayın onayı, tag veya GitHub Release oluşturulmamıştır.
 
 ## CopyPaste 1.6
 
@@ -132,8 +137,9 @@ Dağıtılabilir paketi üretmek için:
 .\tools\Build-Msix.ps1
 ```
 
-Önerilen dağıtım dosyası `artifacts\CopyPaste-1.7.0-Setup.exe` kurulumudur. Alternatif olarak
-`artifacts\CopyPaste-1.7.0-win-x64.zip` arşivini bir klasöre çıkarıp `CopyPaste.App.exe`
+Geliştirme paketlerinde önerilen dosya `artifacts\CopyPaste-1.7.5-Setup.exe` kurulumudur.
+Alternatif olarak `artifacts\CopyPaste-1.7.5-win-x64.zip` arşivini yazma izniniz olan
+bir klasöre tamamen çıkarıp `CopyPaste.App.exe`
 dosyasını doğrudan çalıştırabilirsiniz. Explorer sağ tık menüsü uygulamadaki
 “Sağ tık menüsünü ekle” düğmesiyle kullanıcı hesabına kaydedilir; Windows 11'de klasik
 menüler “Daha fazla seçenek göster” altında görüntülenir.
@@ -141,22 +147,23 @@ menüler “Daha fazla seçenek göster” altında görüntülenir.
 Kurumsal sessiz kurulum örneği:
 
 ```powershell
-.\CopyPaste-1.7.0-Setup.exe /LANG=turkish /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /TASKS="explorer"
+.\CopyPaste-1.7.5-Setup.exe /LANG=turkish /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /TASKS="explorer"
 ```
 
-`v1.6.0` ve `v1.7.0` Setup EXE ve portable ZIP paketleri, ürün sahibinin sürüm bazlı onaylarıyla
-SignPath Foundation başvurusu sonuçlanana kadar geçici olarak Authenticode imzasız
-yayımlanır. İndirmeler `SHA256SUMS.txt` ile doğrulanmalıdır; imzasız MSIX yayımlanmaz.
-Bu istisna yalnızca `v1.6.0` ve `v1.7.0` için geçerlidir. Sonraki her yayın için ürün sahibinden
-sürüm bazlı açık onay alınır. SignPath onayı ve entegrasyonu tamamlandığında EXE,
-kurulum ve MSIX ilk uygun sürümden başlayarak güvenilir biçimde imzalanacaktır.
+`v1.6.0` ve `v1.7.0` Setup EXE ve portable ZIP paketleri ürün sahibinin sürüm bazlı
+istisnasıyla Authenticode imzasız yayımlandı. İndirmeler `SHA256SUMS.txt` ile
+doğrulanmalıdır; imzasız MSIX yayımlanmaz. Bu istisna `v1.7.5` veya sonraki sürümlere
+taşınmaz. SignPath Foundation başvurusu 24 Temmuz 2026'da proje henüz yeterli dış
+görünürlük sinyaline sahip olmadığı için reddedildi. Güvenilir MSIX dağıtımı için
+Microsoft Store hazırlığı 1.8 yol haritasındadır; doğrudan EXE/Setup imzalama ayrı kalır.
 
 ## Code signing policy
 
-Free code signing provided by [SignPath.io](https://signpath.io/), certificate by
-[SignPath Foundation](https://signpath.org/), after sponsorship approval. Ekip rolleri,
-manuel sürüm onayı ve doğrulama adımları [kod imzalama politikasında](CODE_SIGNING_POLICY.md)
-açıklanır. Uygulamanın ağ davranışı için [gizlilik politikasına](PRIVACY.md) bakın.
+SignPath Foundation sponsorluğu şu anda etkin değildir. Gelecekteki güvenilir imzalama,
+Microsoft Store MSIX veya ayrıca onaylanmış bir Authenticode sağlayıcısı üzerinden
+uygulanacaktır. Sürüm onayı ve doğrulama adımları
+[kod imzalama politikasında](CODE_SIGNING_POLICY.md) açıklanır. Uygulamanın ağ davranışı
+için [gizlilik politikasına](PRIVACY.md) bakın.
 
 Uygulama Windows 10 1809 ve üzerini hedefler. Robocopy Windows ile birlikte gelir; harici bir kopyalama aracı kurulmaz.
 
@@ -174,5 +181,6 @@ değerini ilk Release oluşturulmadan önce değiştirin.
   `ALLOW_UNSIGNED_RELEASE=true` değişkeni birlikteyken çalışır; diğer sürümler
   güvenilir imzalama olmadan durur.
 - Yeni bir sürüm yayımlamak için proje ve manifest sürümünü artırıp `v1.7.0` benzeri aynı sürüm
-  etiketi oluşturun. Uygulama öncelikle `CopyPaste-*-Setup.exe`, bulunamazsa taşınabilir ZIP
-  dosyasını indirme hedefi olarak kullanıcıya sunar.
+  etiketi oluşturun. Uygulama kurulu dağıtımda `CopyPaste-*-Setup.exe`, portable dağıtımda
+  `CopyPaste-*-win-x64.zip` paketini tercih eder; yalnızca tercih edilen paket yoksa diğerini
+  indirme hedefi olarak kullanır.

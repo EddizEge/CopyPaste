@@ -6,6 +6,7 @@ public static class ProductInfo
     public const string GitHubRepository = "CopyPaste";
     public const string InstallerAssetSuffix = "-Setup.exe";
     public const string PortableAssetSuffix = "-win-x64.zip";
+    public const string PortableMarkerFileName = "CopyPaste.Portable";
 
     public static Uri RepositoryUri { get; } =
         new($"https://github.com/{GitHubOwner}/{GitHubRepository}");

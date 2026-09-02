@@ -2,11 +2,12 @@
 
 ## Türkçe
 
-CopyPaste, SignPath Foundation'ın açık kaynak sponsorluğuna başvurmaktadır. Başvuru
-onaylandıktan sonra üretim sürümleri şu modelle imzalanacaktır:
-
-> Free code signing provided by [SignPath.io](https://signpath.io/), certificate by
-> [SignPath Foundation](https://signpath.org/).
+CopyPaste'in SignPath Foundation açık kaynak sponsorluğu başvurusu 24 Temmuz 2026'da,
+proje henüz yeterli dış görünürlük ve topluluk sinyaline sahip olmadığı için reddedildi.
+SignPath imzalama şu anda etkin değildir. Proje daha geniş ve doğrulanabilir benimsenme
+kazandığında yeniden başvuru yapılabilir; ücretli bir hizmet veya sertifika ayrıca ürün
+sahibi onayı gerektirir. Microsoft Store'a gönderilen MSIX'in Store tarafından imzalanması
+1.8 dağıtım planında, doğrudan EXE/Setup Authenticode imzasından ayrı ele alınır.
 
 ### Ekip rolleri
 
@@ -18,7 +19,7 @@ onaylandıktan sonra üretim sürümleri şu modelle imzalanacaktır:
 - Yalnızca `EddizEge/CopyPaste` deposundaki kaynak ve build betiklerinden GitHub-hosted
   runner üzerinde üretilen CopyPaste dosyaları imzalanır.
 - İmzalama yalnızca sürüm testleri başarıyla tamamlandıktan sonra istenir.
-- Her SignPath imzalama isteği signing approver tarafından elle onaylanır.
+- Her gelecekteki imzalama isteği signing approver tarafından elle onaylanır.
 - Başka projelere ait üçüncü taraf dosyalar CopyPaste sertifikasıyla imzalanmaz.
 - Ürün sahibinin 23 Temmuz 2026 tarihli sürüm bazlı onaylarıyla yalnızca `v1.6.0`
   ve `v1.7.0` Setup ve portable ZIP dosyaları geçici olarak Authenticode imzasız yayımlanabilir.
@@ -35,11 +36,12 @@ geçilerek bildirilmelidir.
 
 ## English
 
-CopyPaste is applying for SignPath Foundation's open-source sponsorship. After
-approval, production releases will use the following model:
-
-> Free code signing provided by [SignPath.io](https://signpath.io/), certificate by
-> [SignPath Foundation](https://signpath.org/).
+CopyPaste's SignPath Foundation open-source sponsorship application was declined on
+July 24, 2026 because the project did not yet have sufficient external visibility and
+community signals. SignPath signing is not currently active. The project may reapply
+after gaining broader verifiable adoption; any paid service or certificate requires
+separate product-owner approval. Store signing for an MSIX submitted to Microsoft Store
+is planned separately from direct EXE/Setup Authenticode signing in the 1.8 roadmap.
 
 ### Team roles
 
@@ -51,7 +53,7 @@ approval, production releases will use the following model:
 - Only CopyPaste artifacts built on a GitHub-hosted runner from the source and build
   scripts in `EddizEge/CopyPaste` are signed.
 - Signing is requested only after the release tests have passed.
-- Every SignPath signing request is manually approved by the signing approver.
+- Every future signing request is manually approved by the signing approver.
 - Third-party files from other projects are not signed with the CopyPaste certificate.
 - With version-specific approvals from the product owner dated July 23, 2026, only
   the `v1.6.0` and `v1.7.0` Setup and portable ZIP may be published temporarily without an

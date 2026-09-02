@@ -13,13 +13,17 @@ if ([string]::IsNullOrWhiteSpace($version)) { throw "Uygulama sürümü proje do
 $artifacts = Join-Path $root "artifacts"
 $publish = Join-Path $artifacts "CopyPaste-$version-$Runtime"
 $archive = "$publish.zip"
-$buildOutput = Join-Path $root "src\CopyPaste.App\bin\x64\$Configuration\net8.0-windows10.0.19041.0"
+$buildRoot = Join-Path $artifacts ".portable-build-$version"
+$explorerOutput = Join-Path $buildRoot "x64\$Configuration\net8.0-windows10.0.19041.0"
+$portableNotice = Join-Path $root "portable\README.txt"
+$portableMarker = Join-Path $root "portable\CopyPaste.Portable"
 $artifactsFull = [IO.Path]::GetFullPath($artifacts).TrimEnd('\') + '\'
 $publishFull = [IO.Path]::GetFullPath($publish)
 $archiveFull = [IO.Path]::GetFullPath($archive)
 
 if (-not $publishFull.StartsWith($artifactsFull, [StringComparison]::OrdinalIgnoreCase) -or
-    -not $archiveFull.StartsWith($artifactsFull, [StringComparison]::OrdinalIgnoreCase)) {
+    -not $archiveFull.StartsWith($artifactsFull, [StringComparison]::OrdinalIgnoreCase) -or
+    -not ([IO.Path]::GetFullPath($buildRoot)).StartsWith($artifactsFull, [StringComparison]::OrdinalIgnoreCase)) {
     throw "Yayın hedefi artifacts klasörünün dışında olamaz."
 }
 
@@ -36,19 +40,61 @@ if (Test-Path -LiteralPath $publish) {
 if (Test-Path -LiteralPath $archive) {
     Remove-Item -LiteralPath $archive -Force
 }
-
-& $dotnet build (Join-Path $root "CopyPaste.sln") `
-    -c $Configuration `
-    -p:Platform=x64
-
-if ($LASTEXITCODE -ne 0) {
-    throw "CopyPaste Release derlemesi başarısız oldu."
+if (Test-Path -LiteralPath $buildRoot) {
+    Remove-Item -LiteralPath $buildRoot -Recurse -Force
 }
 
-New-Item -ItemType Directory -Path $publish -Force | Out-Null
-Get-ChildItem -LiteralPath $buildOutput |
-    Where-Object { $_.Name -notin @("publish", "win-x64", "AppPackages") } |
-    Copy-Item -Destination $publish -Recurse -Force
+try {
+    & $dotnet build (Join-Path $root "CopyPaste.sln") `
+        -c $Configuration `
+        -p:Platform=x64 `
+        -p:BaseOutputPath="$buildRoot\"
 
-Compress-Archive -Path (Join-Path $publish "*") -DestinationPath $archive -CompressionLevel Optimal
+    if ($LASTEXITCODE -ne 0) {
+        throw "CopyPaste Release derlemesi başarısız oldu."
+    }
+
+    & $dotnet publish $projectPath `
+        -c $Configuration `
+        -r $Runtime `
+        --self-contained true `
+        -p:Platform=x64 `
+        -p:WindowsPackageType=None `
+        -p:PublishSingleFile=false `
+        -p:BaseOutputPath="$buildRoot\" `
+        -p:ExplorerCommandOutputPath="$explorerOutput" `
+        -o $publish
+
+    if ($LASTEXITCODE -ne 0) {
+        throw "CopyPaste self-contained portable yayını oluşturulamadı."
+    }
+
+    if (-not (Test-Path -LiteralPath $portableNotice)) {
+        throw "Portable kullanım bildirimi bulunamadı: $portableNotice"
+    }
+    if (-not (Test-Path -LiteralPath $portableMarker)) {
+        throw "Portable dağıtım işareti bulunamadı: $portableMarker"
+    }
+    Copy-Item -LiteralPath $portableNotice -Destination (Join-Path $publish "README.txt") -Force
+    Copy-Item -LiteralPath $portableMarker -Destination (Join-Path $publish "CopyPaste.Portable") -Force
+
+    $requiredFiles = @("CopyPaste.App.exe", "CopyPaste.App.dll", "CopyPaste.Core.dll", "coreclr.dll", "hostfxr.dll", "README.txt", "CopyPaste.Portable")
+    foreach ($requiredFile in $requiredFiles) {
+        if (-not (Test-Path -LiteralPath (Join-Path $publish $requiredFile))) {
+            throw "Portable pakette zorunlu dosya eksik: $requiredFile"
+        }
+    }
+
+    Compress-Archive -Path (Join-Path $publish "*") -DestinationPath $archive -CompressionLevel Optimal
+    & (Join-Path $PSScriptRoot "Test-PortablePackage.ps1") -ArchivePath $archive -ExpectedVersion $version
+    if ($LASTEXITCODE -ne 0) {
+        throw "Portable paket smoke testi başarısız oldu."
+    }
+}
+finally {
+    if (Test-Path -LiteralPath $buildRoot) {
+        Remove-Item -LiteralPath $buildRoot -Recurse -Force
+    }
+}
+
 Write-Host "CopyPaste hazır: $archive"
