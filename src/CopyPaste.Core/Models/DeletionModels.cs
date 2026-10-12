@@ -27,7 +27,8 @@ public enum DeletionIssueCode
     MultipleHardLinks,
     EnumerationFailed,
     ChangedAfterPreview,
-    OperationFailed
+    OperationFailed,
+    HardLinkCountUnavailable
 }
 
 public sealed record DeletionIssue(string Path, DeletionIssueCode Code, string Message);
@@ -77,6 +78,12 @@ public sealed record DeletionResult(
     public int FailedCount => Items.Count(item => !item.Succeeded);
     public bool Succeeded => !WasCanceled && FailedCount == 0;
 }
+
+public sealed record ElevatedDeletionRequest(
+    IReadOnlyList<string> Paths,
+    DeletionMode Mode,
+    string PlanFingerprint,
+    string CancelFile);
 
 public sealed record DeletionHistoryEntry(
     Guid Id,

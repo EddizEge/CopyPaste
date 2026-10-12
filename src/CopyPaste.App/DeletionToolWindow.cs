@@ -36,6 +36,7 @@ public sealed class DeletionToolView : UserControl
     private readonly Window _owner;
     private readonly Action? _closeRequested;
     private readonly ObservableCollection<string> _paths = [];
+    private readonly DeletionSelectionState _selection = new();
     private readonly DeletionPlanner _planner = new();
     private readonly DeletionHistoryStore _historyStore = new();
     private readonly Grid _root = new() { Background = Brush("PageBrush") };
@@ -50,6 +51,8 @@ public sealed class DeletionToolView : UserControl
     private readonly Button _cancelButton = new();
     private readonly Button _elevateButton = new();
     private DeletionPlan? _plan;
+    private long _planSelectionVersion;
+    private bool _busy;
     private CancellationTokenSource? _operationCancellation;
 
     public DeletionToolView(bool english, Window owner, Action? closeRequested = null)
@@ -63,7 +66,7 @@ public sealed class DeletionToolView : UserControl
         _pathList.MinHeight = 210;
         _pathList.SelectionChanged += (_, _) => UpdateRemoveButton();
         _manualPath.PlaceholderText = T("Tam dosya veya klasör yolu", "Full file or folder path");
-        _manualPath.TextChanged += (_, _) => _addPathButton.IsEnabled = !string.IsNullOrWhiteSpace(_manualPath.Text);
+        _manualPath.TextChanged += (_, _) => UpdateAddPathButton();
 
         _mode.ItemsSource = new[]
         {
@@ -108,6 +111,9 @@ public sealed class DeletionToolView : UserControl
 
     private readonly Button _addPathButton = new();
     private readonly Button _removeButton = new();
+    private readonly Button _selectFilesButton = new();
+    private readonly Button _selectFolderButton = new();
+    private readonly Button _clearButton = new();
 
     private UIElement BuildContent()
     {
@@ -126,8 +132,12 @@ public sealed class DeletionToolView : UserControl
             TextWrapping = TextWrapping.Wrap
         };
 
-        var selectFiles = Button(T("Dosyaları seç", "Select files"), SelectFiles_Click);
-        var selectFolder = Button(T("Klasör seç", "Select folder"), SelectFolder_Click);
+        _selectFilesButton.Content = T("Dosyaları seç", "Select files");
+        _selectFilesButton.Style = GetStyle("QuietButtonStyle");
+        _selectFilesButton.Click += SelectFiles_Click;
+        _selectFolderButton.Content = T("Klasör seç", "Select folder");
+        _selectFolderButton.Style = GetStyle("QuietButtonStyle");
+        _selectFolderButton.Click += SelectFolder_Click;
         _elevateButton.Content = T("Yönetici olarak yeniden aç", "Reopen as administrator");
         _elevateButton.Style = GetStyle("QuietButtonStyle");
         _elevateButton.Visibility = DeletionElevationService.IsElevated()
@@ -150,11 +160,9 @@ public sealed class DeletionToolView : UserControl
         _removeButton.Content = T("Seçilenleri kaldır", "Remove selected");
         _removeButton.Style = GetStyle("QuietButtonStyle");
         _removeButton.Click += (_, _) => RemoveSelectedPaths();
-        var clearButton = Button(T("Listeyi temizle", "Clear list"), (_, _) =>
-        {
-            _paths.Clear();
-            InvalidatePreview();
-        });
+        _clearButton.Content = T("Listeyi temizle", "Clear list");
+        _clearButton.Style = GetStyle("QuietButtonStyle");
+        _clearButton.Click += (_, _) => ClearPaths();
 
         var manualRow = new Grid { ColumnSpacing = 8 };
         manualRow.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
@@ -168,10 +176,10 @@ public sealed class DeletionToolView : UserControl
             Orientation = Orientation.Horizontal,
             Spacing = 8
         };
-        pickerButtons.Children.Add(selectFiles);
-        pickerButtons.Children.Add(selectFolder);
+        pickerButtons.Children.Add(_selectFilesButton);
+        pickerButtons.Children.Add(_selectFolderButton);
         pickerButtons.Children.Add(_removeButton);
-        pickerButtons.Children.Add(clearButton);
+        pickerButtons.Children.Add(_clearButton);
         pickerButtons.Children.Add(_elevateButton);
 
         var targetsPanel = new StackPanel { Spacing = 10 };
@@ -280,12 +288,12 @@ public sealed class DeletionToolView : UserControl
         }
     }
 
+    // Every list mutation goes through the selection state so its version invalidates older previews.
     private void AddPath(string? path)
     {
-        if (string.IsNullOrWhiteSpace(path))
+        if (_busy || string.IsNullOrWhiteSpace(path))
             return;
-        var candidate = path.Trim().Trim('"');
-        if (!_paths.Contains(candidate, StringComparer.OrdinalIgnoreCase))
+        if (_selection.TryAdd(path, out var candidate))
             _paths.Add(candidate);
         _manualPath.Text = string.Empty;
         InvalidatePreview();
@@ -293,22 +301,47 @@ public sealed class DeletionToolView : UserControl
 
     private void RemoveSelectedPaths()
     {
+        if (_busy)
+            return;
         foreach (var path in _pathList.SelectedItems.Cast<string>().ToArray())
-            _paths.Remove(path);
+        {
+            if (_selection.Remove(path))
+                _paths.Remove(path);
+        }
+        InvalidatePreview();
+    }
+
+    private void ClearPaths()
+    {
+        if (_busy)
+            return;
+        _selection.Clear();
+        _paths.Clear();
         InvalidatePreview();
     }
 
     private async Task PreviewAsync()
     {
-        if (_paths.Count == 0 || _mode.SelectedItem is not ModeChoice choice)
+        if (_busy)
+            return;
+        if (_selection.Count == 0 || _mode.SelectedItem is not ModeChoice choice)
         {
             _summary.Text = T("Önce en az bir hedef seçin.", "Select at least one target first.");
             return;
         }
+        var snapshot = _selection.Snapshot();
         SetBusy(true, T("Hedefler güvenli biçimde taranıyor…", "Targets are being scanned safely…"));
         try
         {
-            _plan = await _planner.CreateAsync(_paths, choice.Mode);
+            var plan = await _planner.CreateAsync(snapshot.Paths, choice.Mode);
+            if (!_selection.IsCurrent(snapshot.Version))
+            {
+                InvalidatePreview();
+                ShowStaleSelection();
+                return;
+            }
+            _plan = plan;
+            _planSelectionVersion = snapshot.Version;
             _summary.Text = T(
                 $"{_plan.FileCount:N0} dosya • {_plan.DirectoryCount:N0} klasör/bağlantı • {FormatBytes(_plan.TotalBytes)}",
                 $"{_plan.FileCount:N0} files • {_plan.DirectoryCount:N0} folders/links • {FormatBytes(_plan.TotalBytes)}");
@@ -335,10 +368,22 @@ public sealed class DeletionToolView : UserControl
 
     private async Task DeleteAsync()
     {
-        if (_plan is not { IsValid: true } plan)
+        if (_busy || _plan is not { IsValid: true } plan)
             return;
+        if (!IsPlanCurrent(plan))
+        {
+            InvalidatePreview();
+            ShowStaleSelection();
+            return;
+        }
         if (!await ConfirmAsync(plan))
             return;
+        if (!IsPlanCurrent(plan))
+        {
+            InvalidatePreview();
+            ShowStaleSelection();
+            return;
+        }
 
         SetBusy(true, T("Silme işlemi başlatılıyor…", "Starting deletion…"), allowCancel: true);
         _operationCancellation = new CancellationTokenSource();
@@ -389,8 +434,28 @@ public sealed class DeletionToolView : UserControl
             {
                 foreach (var succeeded in result.Items.Where(item => item.Succeeded)
                              .Select(item => item.Path).ToArray())
-                    _paths.Remove(succeeded);
+                {
+                    if (_selection.Remove(succeeded))
+                        _paths.Remove(succeeded);
+                }
             }
+        }
+        catch (ElevatedDeletionException ex)
+        {
+            _summary.Text = ex.Kind switch
+            {
+                ElevatedDeletionFailureKind.RequestRejected => T(
+                    "Yönetici işlemi isteği doğrulayamadı ve reddetti; hiçbir öğe silinmedi.",
+                    "The administrator process could not validate the request and rejected it; no items were deleted."),
+                ElevatedDeletionFailureKind.BrokerFailed => T(
+                    "Yönetici işlemi silme sırasında beklenmeyen bir hatayla durdu; bazı öğeler işlenmiş olabilir. Yeniden önizleyin.",
+                    "The administrator process stopped with an unexpected error during deletion; some items may have been processed. Preview again."),
+                _ => T(
+                    "Yönetici işlemi okunabilir bir sonuç döndürmedi; hedeflerin durumunu yeniden önizleyerek denetleyin.",
+                    "The administrator process did not return a readable result; preview again to check the targets.")
+            };
+            _details.Text = ex.Message;
+            _plan = null;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException
             or InvalidOperationException)
@@ -475,12 +540,18 @@ public sealed class DeletionToolView : UserControl
 
     private void SetBusy(bool busy, string? message = null, bool allowCancel = false)
     {
+        _busy = busy;
         _previewButton.IsEnabled = !busy;
-        _deleteButton.IsEnabled = !busy && _plan?.IsValid == true;
+        _deleteButton.IsEnabled = !busy && _plan is { } plan && IsPlanCurrent(plan);
         _mode.IsEnabled = !busy;
         _pathList.IsEnabled = !busy;
         _manualPath.IsEnabled = !busy;
+        _selectFilesButton.IsEnabled = !busy;
+        _selectFolderButton.IsEnabled = !busy;
+        _clearButton.IsEnabled = !busy;
         _elevateButton.IsEnabled = !busy;
+        UpdateAddPathButton();
+        UpdateRemoveButton();
         _cancelButton.Visibility = busy && allowCancel ? Visibility.Visible : Visibility.Collapsed;
         _progress.Visibility = busy ? Visibility.Visible : Visibility.Collapsed;
         _progress.IsIndeterminate = busy;
@@ -505,7 +576,22 @@ public sealed class DeletionToolView : UserControl
             "Create a preview after selecting targets and a method. Files are revalidated between preview and execution.");
     }
 
-    private void UpdateRemoveButton() => _removeButton.IsEnabled = _pathList.SelectedItems.Count > 0;
+    private bool IsPlanCurrent(DeletionPlan plan) =>
+        plan.IsValid && _selection.IsCurrent(_planSelectionVersion);
+
+    private void ShowStaleSelection()
+    {
+        _summary.Text = T("Seçim önizleme sırasında değişti; yeniden önizleyin.",
+            "The selection changed during the preview; preview again.");
+        _details.Text = T("Eski önizleme kullanılmadı; hiçbir öğe değiştirilmedi.",
+            "The outdated preview was discarded; no items were changed.");
+    }
+
+    private void UpdateAddPathButton() =>
+        _addPathButton.IsEnabled = !_busy && !string.IsNullOrWhiteSpace(_manualPath.Text);
+
+    private void UpdateRemoveButton() =>
+        _removeButton.IsEnabled = !_busy && _pathList.SelectedItems.Count > 0;
 
     private string LocalizeIssue(DeletionIssue issue) => issue.Code switch
     {
@@ -521,6 +607,9 @@ public sealed class DeletionToolView : UserControl
         DeletionIssueCode.AccessDenied => T("Windows erişimi reddetti; sahiplik ve ACL değiştirilmeyecek.",
             "Windows denied access; ownership and ACLs will not be changed."),
         DeletionIssueCode.Missing => T("Hedef artık mevcut değil.", "The target no longer exists."),
+        DeletionIssueCode.HardLinkCountUnavailable => T(
+            "Dosyanın hard link sayısı okunamadı; başka bir yolu değiştirmemek için güvenli silme engellendi.",
+            "The file's hard link count could not be read; secure erase was blocked to avoid changing another path."),
         _ => issue.Message
     };
 
@@ -559,13 +648,6 @@ public sealed class DeletionToolView : UserControl
         Style = GetStyle("CardStyle"),
         Child = child
     };
-
-    private static Button Button(string label, RoutedEventHandler handler)
-    {
-        var button = new Button { Content = label, Style = GetStyle("QuietButtonStyle") };
-        button.Click += handler;
-        return button;
-    }
 
     private static Style GetStyle(string key)
     {

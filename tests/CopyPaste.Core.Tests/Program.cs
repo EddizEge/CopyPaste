@@ -289,6 +289,187 @@ try
             "Başlamadan iptal edilen silme işlemi hedefe dokunmamalı");
     }
 
+    var selectionState = new DeletionSelectionState();
+    Assert(selectionState.TryAdd("  \"C:\\Seçim\\Bir\"  ", out var firstSelection)
+           && firstSelection == @"C:\Seçim\Bir"
+           && !selectionState.TryAdd(@"c:\seçim\bir", out _)
+           && selectionState.Count == 1,
+        "Silme seçimi yolları kırpıp büyük/küçük harf duyarsız tekilleştirmeyi korumalı");
+    var unchangedSnapshot = selectionState.Snapshot();
+    Assert(!selectionState.TryAdd(@"C:\SEÇim\BİR".Replace("İ", "I"), out _)
+           && selectionState.IsCurrent(unchangedSnapshot.Version),
+        "Silme seçimi değişmediyse önizleme anlık görüntüsü güncel kalmalı");
+    selectionState.Clear();
+    selectionState.TryAdd(@"C:\Seçim\Bir", out _);
+    var addSnapshot = selectionState.Snapshot();
+    selectionState.TryAdd(@"C:\Seçim\İki", out _);
+    Assert(!selectionState.IsCurrent(addSnapshot.Version)
+           && addSnapshot.Paths.SequenceEqual([@"C:\Seçim\Bir"]),
+        "Önizleme sırasında eklenen yol eski anlık görüntüyü geçersiz kılmalı ve kopyayı değiştirmemeli");
+    var removeSnapshot = selectionState.Snapshot();
+    selectionState.Remove(@"C:\Seçim\Bir");
+    Assert(!selectionState.IsCurrent(removeSnapshot.Version)
+           && removeSnapshot.Paths.SequenceEqual([@"C:\Seçim\Bir", @"C:\Seçim\İki"]),
+        "Önizleme sırasında kaldırılan yol eski anlık görüntüyü geçersiz kılmalı ve kopyayı değiştirmemeli");
+    var clearSnapshot = selectionState.Snapshot();
+    selectionState.Clear();
+    Assert(!selectionState.IsCurrent(clearSnapshot.Version)
+           && clearSnapshot.Paths.SequenceEqual([@"C:\Seçim\İki"])
+           && selectionState.Count == 0,
+        "Önizleme sırasında temizlenen liste eski anlık görüntüyü geçersiz kılmalı");
+    var idleSnapshot = selectionState.Snapshot();
+    selectionState.Clear();
+    Assert(!selectionState.Remove(@"C:\Yok") && !selectionState.TryAdd("  ", out _)
+           && selectionState.IsCurrent(idleSnapshot.Version),
+        "Etkisiz seçim işlemleri önizleme sürümünü değiştirmemeli");
+
+    var validFingerprint = new string('a', 64);
+    var validCancelFile = @"C:\CopyPaste\DeletionRequests\x.cancel";
+    ElevatedDeletionRequest BrokerRequest(IReadOnlyList<string> paths, DeletionMode mode, string fingerprint) =>
+        new(paths, mode, fingerprint, validCancelFile);
+    DeletionElevationRequestError BrokerError(ElevatedDeletionRequest? request) =>
+        DeletionElevationRequestValidator.Validate(request).Error;
+    Assert(BrokerError(null) == DeletionElevationRequestError.MissingRequest
+           && BrokerError(BrokerRequest(null!, DeletionMode.Permanent, validFingerprint))
+               == DeletionElevationRequestError.MissingPaths
+           && BrokerError(BrokerRequest([], DeletionMode.Permanent, validFingerprint))
+               == DeletionElevationRequestError.MissingPaths
+           && BrokerError(BrokerRequest([@"C:\a", null!], DeletionMode.Permanent, validFingerprint))
+               == DeletionElevationRequestError.InvalidPathEntry
+           && BrokerError(BrokerRequest([@"C:\a", " "], DeletionMode.Permanent, validFingerprint))
+               == DeletionElevationRequestError.InvalidPathEntry
+           && BrokerError(BrokerRequest(
+                   Enumerable.Repeat(@"C:\a", DeletionElevationRequestValidator.MaximumPathCount + 1).ToArray(),
+                   DeletionMode.Permanent, validFingerprint))
+               == DeletionElevationRequestError.TooManyPaths,
+        "UAC aracısı boş, null veya aşırı büyük hedef listelerini reddetmeli");
+    Assert(BrokerError(BrokerRequest([@"C:\a"], (DeletionMode)99, validFingerprint))
+               == DeletionElevationRequestError.InvalidMode
+           && BrokerError(BrokerRequest([@"C:\a"], (DeletionMode)(-1), validFingerprint))
+               == DeletionElevationRequestError.InvalidMode
+           && BrokerError(BrokerRequest([@"C:\a"], DeletionMode.RecycleBin, validFingerprint))
+               == DeletionElevationRequestError.InvalidMode
+           && BrokerError(BrokerRequest([@"C:\a"], (DeletionMode)0, validFingerprint))
+               == DeletionElevationRequestError.InvalidMode,
+        "UAC aracısı tanımsız modları ve Geri Dönüşüm Kutusu modunu kalıcı silme gibi işlememeli");
+    Assert(BrokerError(BrokerRequest([@"C:\a"], DeletionMode.Permanent, null!))
+               == DeletionElevationRequestError.InvalidFingerprint
+           && BrokerError(BrokerRequest([@"C:\a"], DeletionMode.Permanent, ""))
+               == DeletionElevationRequestError.InvalidFingerprint
+           && BrokerError(BrokerRequest([@"C:\a"], DeletionMode.Permanent, "abc123"))
+               == DeletionElevationRequestError.InvalidFingerprint
+           && BrokerError(BrokerRequest([@"C:\a"], DeletionMode.Permanent, new string('g', 64)))
+               == DeletionElevationRequestError.InvalidFingerprint
+           && BrokerError(new ElevatedDeletionRequest([@"C:\a"], DeletionMode.Permanent, validFingerprint, null!))
+               == DeletionElevationRequestError.InvalidCancelFile,
+        "UAC aracısı boş, kısa veya hex olmayan plan parmak izlerini ve iptal yolunu reddetmeli");
+    Assert(DeletionElevationRequestValidator.Validate(
+               BrokerRequest([@"C:\a"], DeletionMode.Permanent, validFingerprint)).IsValid
+           && DeletionElevationRequestValidator.Validate(
+               BrokerRequest([@"C:\a", @"D:\b"], DeletionMode.SecureErase, validFingerprint.ToUpperInvariant())).IsValid,
+        "UAC aracısı geçerli kalıcı ve güvenli silme isteklerini kabul etmeli");
+    var brokerJsonOptions = new JsonSerializerOptions(JsonSerializerDefaults.Web);
+    ElevatedDeletionRequest? FromBrokerJson(string json) =>
+        JsonSerializer.Deserialize<ElevatedDeletionRequest>(json, brokerJsonOptions);
+    var brokerFingerprintJson = JsonSerializer.Serialize(validFingerprint);
+    var brokerCancelJson = JsonSerializer.Serialize(validCancelFile);
+    Assert(BrokerError(FromBrokerJson(
+               $"{{\"paths\":[\"C:\\\\a\"],\"mode\":99,\"planFingerprint\":{brokerFingerprintJson},\"cancelFile\":{brokerCancelJson},\"unknown\":true}}"))
+               == DeletionElevationRequestError.InvalidMode
+           && BrokerError(FromBrokerJson(
+               $"{{\"mode\":1,\"planFingerprint\":{brokerFingerprintJson},\"cancelFile\":{brokerCancelJson}}}"))
+               == DeletionElevationRequestError.MissingPaths
+           && BrokerError(FromBrokerJson(
+               $"{{\"paths\":[null],\"mode\":1,\"planFingerprint\":{brokerFingerprintJson},\"cancelFile\":{brokerCancelJson}}}"))
+               == DeletionElevationRequestError.InvalidPathEntry
+           && BrokerError(FromBrokerJson(
+               $"{{\"paths\":[\"C:\\\\a\"],\"mode\":0,\"planFingerprint\":{brokerFingerprintJson},\"cancelFile\":{brokerCancelJson}}}"))
+               == DeletionElevationRequestError.InvalidMode
+           && BrokerError(FromBrokerJson(
+               $"{{\"paths\":[\"C:\\\\a\"],\"mode\":2,\"planFingerprint\":{brokerFingerprintJson},\"cancelFile\":{brokerCancelJson},\"unknown\":1}}"))
+               == DeletionElevationRequestError.None,
+        "JSON'dan gelen sayısal mod, eksik liste ve null öğe UAC aracısı doğrulayıcısından geçmeli");
+    var brokerRoundTripFile = Path.Combine(deletionTestRoot, "aracı-gidiş-dönüş.txt");
+    await File.WriteAllTextAsync(brokerRoundTripFile, "broker");
+    var brokerRoundTripPlan = deletionPlanner.Create([brokerRoundTripFile], DeletionMode.Permanent);
+    var brokerRoundTrip = FromBrokerJson(JsonSerializer.Serialize(new ElevatedDeletionRequest(
+        brokerRoundTripPlan.RequestedPaths, brokerRoundTripPlan.Mode,
+        DeletionPlanFingerprint.Create(brokerRoundTripPlan), validCancelFile), brokerJsonOptions));
+    Assert(DeletionElevationRequestValidator.Validate(brokerRoundTrip).IsValid,
+        "Orta bütünlüklü tarafın yazdığı gerçek UAC isteği doğrulayıcıdan geçmeli");
+
+    Assert(!DeletionPlanner.IsSecureEraseLinkCountAcceptable(null)
+           && DeletionPlanner.IsSecureEraseLinkCountAcceptable(1)
+           && !DeletionPlanner.IsSecureEraseLinkCountAcceptable(2)
+           && !DeletionPlanner.IsSecureEraseLinkCountAcceptable(0),
+        "Güvenli silme yalnızca hard link sayısı tam olarak 1 okunabilen dosyalara izin vermeli");
+
+    var lateLinkTarget = Path.Combine(deletionTestRoot, "sonradan-bağlanan.bin");
+    var lateLinkAlias = Path.Combine(deletionTestRoot, "sonradan-bağlanan-diğer-yol.bin");
+    var lateLinkCompanion = Path.Combine(deletionTestRoot, "sonradan-bağlanan-yanındaki.bin");
+    var lateLinkContent = RandomNumberGenerator.GetBytes(64 * 1024 + 3);
+    await File.WriteAllBytesAsync(lateLinkTarget, lateLinkContent);
+    await File.WriteAllBytesAsync(lateLinkCompanion, RandomNumberGenerator.GetBytes(4096));
+    var lateLinkPlan = deletionPlanner.Create([lateLinkTarget, lateLinkCompanion], DeletionMode.SecureErase);
+    Assert(lateLinkPlan.IsValid, "Hard link eklenmeden önce güvenli silme planı geçerli olmalı");
+    if (lateLinkPlan.IsValid
+        && NativeFileMethods.CreateHardLink(lateLinkAlias, lateLinkTarget, IntPtr.Zero))
+    {
+        var lateLinkEntry = lateLinkPlan.Entries.Single(entry => entry.Path == lateLinkTarget);
+        // Creating a hard link changes neither size, attributes nor last-write time, so the
+        // preview revalidation still accepts the entry; only the service's own link recheck can stop it.
+        Assert(deletionPlanner.IsEntryUnchanged(lateLinkEntry, out _),
+            "Sonradan eklenen hard link önizleme yeniden doğrulamasını geçmeli (servis içi kontrolün kanıtı)");
+        var lateLinkResult = await new DeletionService(deletionPlanner).ExecuteAsync(lateLinkPlan);
+        var lateLinkItem = lateLinkResult.Items.SingleOrDefault(item => item.Path == lateLinkTarget);
+        var companionItem = lateLinkResult.Items.SingleOrDefault(item => item.Path == lateLinkCompanion);
+        Assert(lateLinkItem is { Succeeded: false, PartiallyOverwritten: false,
+                   ErrorCode: DeletionIssueCode.MultipleHardLinks }
+               && File.Exists(lateLinkTarget) && File.Exists(lateLinkAlias)
+               && (await File.ReadAllBytesAsync(lateLinkTarget)).SequenceEqual(lateLinkContent)
+               && (await File.ReadAllBytesAsync(lateLinkAlias)).SequenceEqual(lateLinkContent),
+            "Önizlemeden sonra eklenen hard link güvenli silmede üzerine yazılmadan reddedilmeli");
+        Assert(companionItem is { Succeeded: true } && !File.Exists(lateLinkCompanion),
+            "Hard link nedeniyle reddedilen dosya diğer güvenli silme hedeflerini durdurmamalı");
+    }
+
+    var readOnlySecureFile = Path.Combine(deletionTestRoot, "salt-okunur-güvenli.bin");
+    await File.WriteAllBytesAsync(readOnlySecureFile, RandomNumberGenerator.GetBytes(8192));
+    File.SetAttributes(readOnlySecureFile, File.GetAttributes(readOnlySecureFile) | FileAttributes.ReadOnly);
+    var readOnlySecurePlan = deletionPlanner.Create([readOnlySecureFile], DeletionMode.SecureErase);
+    if (readOnlySecurePlan.IsValid)
+    {
+        var readOnlySecureResult = await new DeletionService(deletionPlanner).ExecuteAsync(readOnlySecurePlan);
+        Assert(readOnlySecureResult.Succeeded && !File.Exists(readOnlySecureFile)
+               && readOnlySecureResult.Items.All(item => item.ErrorCode != DeletionIssueCode.AccessDenied),
+            "Güvenli silme salt okunur geçici dosyada AccessDenied vermeden üzerine yazıp silmeli");
+    }
+    else
+    {
+        Assert(false, "Salt okunur geçici dosya güvenli silme için planlanabilmeli");
+    }
+    if (File.Exists(readOnlySecureFile))
+        File.SetAttributes(readOnlySecureFile, FileAttributes.Normal);
+
+    var readOnlyLockedFile = Path.Combine(deletionTestRoot, "salt-okunur-kilitli.bin");
+    var readOnlyLockedContent = RandomNumberGenerator.GetBytes(4096);
+    await File.WriteAllBytesAsync(readOnlyLockedFile, readOnlyLockedContent);
+    File.SetAttributes(readOnlyLockedFile, File.GetAttributes(readOnlyLockedFile) | FileAttributes.ReadOnly);
+    var readOnlyLockedPlan = deletionPlanner.Create([readOnlyLockedFile], DeletionMode.SecureErase);
+    if (readOnlyLockedPlan.IsValid)
+    {
+        DeletionResult readOnlyLockedResult;
+        await using (new FileStream(readOnlyLockedFile, FileMode.Open, FileAccess.Read, FileShare.Read))
+            readOnlyLockedResult = await new DeletionService(deletionPlanner).ExecuteAsync(readOnlyLockedPlan);
+        Assert(readOnlyLockedResult.Items is [{ Succeeded: false, PartiallyOverwritten: false,
+                   ErrorCode: DeletionIssueCode.InUse }]
+               && (File.GetAttributes(readOnlyLockedFile) & FileAttributes.ReadOnly) != 0
+               && (await File.ReadAllBytesAsync(readOnlyLockedFile)).SequenceEqual(readOnlyLockedContent),
+            "Üzerine yazma açılamazsa salt okunur öznitelik geri yüklenmeli ve içerik değişmemeli");
+    }
+    if (File.Exists(readOnlyLockedFile))
+        File.SetAttributes(readOnlyLockedFile, FileAttributes.Normal);
+
     Assert(CopyJobValidator.Validate(tempSource, tempSource).IsValid == false, "Aynı yollar reddedilmeli");
     Assert(CopyJobValidator.Validate(tempSource, Path.Combine(tempSource, "child")).IsValid == false, "İç içe yollar reddedilmeli");
     Assert(CopyJobValidator.Validate(tempSource, tempDestination).IsValid, "Bağımsız yollar kabul edilmeli");

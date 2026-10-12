@@ -191,10 +191,24 @@ public sealed class DeletionPlanner
                     "Secure erasure is limited to regular files on local fixed NTFS volumes."));
                 continue;
             }
-            if (GetHardLinkCount(entry.Path) is > 1)
-                issues.Add(new(entry.Path, DeletionIssueCode.MultipleHardLinks,
-                    "The file has multiple hard links; overwriting it would alter another path."));
+            if (TryGetSecureEraseLinkIssue(entry.Path, GetHardLinkCount(entry.Path), out var linkIssue))
+                issues.Add(linkIssue);
         }
+    }
+
+    public static bool IsSecureEraseLinkCountAcceptable(uint? linkCount) => linkCount == 1;
+
+    internal static bool TryGetSecureEraseLinkIssue(string path, uint? linkCount, out DeletionIssue issue)
+    {
+        issue = null!;
+        if (IsSecureEraseLinkCountAcceptable(linkCount))
+            return false;
+        issue = linkCount is null
+            ? new(path, DeletionIssueCode.HardLinkCountUnavailable,
+                "The file's hard link count could not be read; secure erasure was blocked to avoid altering another path.")
+            : new(path, DeletionIssueCode.MultipleHardLinks,
+                "The file has multiple hard links; overwriting it would alter another path.");
+        return true;
     }
 
     private static void ValidateRecycleBin(
@@ -321,15 +335,13 @@ public sealed class DeletionPlanner
         }
     }
 
-    private static uint? GetHardLinkCount(string path)
+    internal static uint? GetHardLinkCount(string path)
     {
         try
         {
             using var stream = new FileStream(path, FileMode.Open, FileAccess.Read,
                 FileShare.ReadWrite | FileShare.Delete);
-            return GetFileInformationByHandle(stream.SafeFileHandle, out var info)
-                ? info.NumberOfLinks
-                : null;
+            return GetHardLinkCount(stream.SafeFileHandle);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
@@ -337,23 +349,30 @@ public sealed class DeletionPlanner
         }
     }
 
+    // FileStandardInfo needs no specific handle access, so a write-only overwrite handle can be checked too.
+    internal static uint? GetHardLinkCount(SafeFileHandle handle) =>
+        GetFileInformationByHandleEx(handle, FileStandardInfoClass, out var info,
+            (uint)Marshal.SizeOf<FileStandardInfo>())
+            ? info.NumberOfLinks
+            : null;
+
+    private const int FileStandardInfoClass = 1;
+
     [DllImport("kernel32.dll", SetLastError = true)]
-    private static extern bool GetFileInformationByHandle(
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetFileInformationByHandleEx(
         SafeFileHandle handle,
-        out ByHandleFileInformation information);
+        int informationClass,
+        out FileStandardInfo information,
+        uint bufferSize);
 
     [StructLayout(LayoutKind.Sequential)]
-    private struct ByHandleFileInformation
+    private struct FileStandardInfo
     {
-        public uint FileAttributes;
-        public System.Runtime.InteropServices.ComTypes.FILETIME CreationTime;
-        public System.Runtime.InteropServices.ComTypes.FILETIME LastAccessTime;
-        public System.Runtime.InteropServices.ComTypes.FILETIME LastWriteTime;
-        public uint VolumeSerialNumber;
-        public uint FileSizeHigh;
-        public uint FileSizeLow;
+        public long AllocationSize;
+        public long EndOfFile;
         public uint NumberOfLinks;
-        public uint FileIndexHigh;
-        public uint FileIndexLow;
+        public byte DeletePending;
+        public byte Directory;
     }
 }

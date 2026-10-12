@@ -85,16 +85,32 @@ public sealed class DeletionService
 
                 if (entry.Kind == DeletionEntryKind.File && plan.Mode == DeletionMode.SecureErase)
                 {
-                    Overwrite(entry, progress, completed, plan.Entries.Count,
-                        processedBytes, plan.TotalBytes, ref partiallyOverwritten, cancellationToken);
-                    processedBytes += entry.Length;
-                    cancellationToken.ThrowIfCancellationRequested();
+                    var clearedReadOnly = ClearReadOnlyForOverwrite(entry);
+                    try
+                    {
+                        Overwrite(entry, progress, completed, plan.Entries.Count,
+                            processedBytes, plan.TotalBytes, ref partiallyOverwritten, cancellationToken);
+                        processedBytes += entry.Length;
+                        cancellationToken.ThrowIfCancellationRequested();
+                        DeleteEntry(entry);
+                    }
+                    catch when (clearedReadOnly)
+                    {
+                        RestoreAttributes(entry);
+                        throw;
+                    }
                 }
-
-                DeleteEntry(entry);
-                if (entry.Kind == DeletionEntryKind.File && plan.Mode != DeletionMode.SecureErase)
-                    processedBytes += entry.Length;
+                else
+                {
+                    DeleteEntry(entry);
+                    if (entry.Kind == DeletionEntryKind.File)
+                        processedBytes += entry.Length;
+                }
                 results.Add(new(entry.Path, true, false));
+            }
+            catch (SecureEraseRefusedException ex)
+            {
+                results.Add(new(entry.Path, false, false, ex.Code, ex.Message));
             }
             catch (OperationCanceledException)
             {
@@ -140,6 +156,8 @@ public sealed class DeletionService
     {
         using var stream = new FileStream(entry.Path, FileMode.Open, FileAccess.Write,
             FileShare.None, BufferSize, FileOptions.WriteThrough | FileOptions.SequentialScan);
+        // Recheck on the exclusive handle: a hard link added after the preview must never be overwritten.
+        EnsureSingleHardLink(entry.Path, DeletionPlanner.GetHardLinkCount(stream.SafeFileHandle));
         var buffer = new byte[BufferSize];
         for (var pass = 1; pass <= SecureErasePasses; pass++)
         {
@@ -167,6 +185,33 @@ public sealed class DeletionService
         }
         stream.SetLength(0);
         stream.Flush(flushToDisk: true);
+    }
+
+    private static void EnsureSingleHardLink(string path, uint? linkCount)
+    {
+        if (DeletionPlanner.TryGetSecureEraseLinkIssue(path, linkCount, out var issue))
+            throw new SecureEraseRefusedException(issue.Code, issue.Message);
+    }
+
+    // Only the ReadOnly attribute is cleared for overwriting; ownership and ACLs are never changed.
+    private static bool ClearReadOnlyForOverwrite(DeletionEntry entry)
+    {
+        if ((entry.Attributes & FileAttributes.ReadOnly) == 0)
+            return false;
+        File.SetAttributes(entry.Path, entry.Attributes & ~FileAttributes.ReadOnly);
+        return true;
+    }
+
+    private static void RestoreAttributes(DeletionEntry entry)
+    {
+        try
+        {
+            if (File.Exists(entry.Path))
+                File.SetAttributes(entry.Path, entry.Attributes);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+        }
     }
 
     private static void DeleteEntry(DeletionEntry entry)
@@ -207,4 +252,10 @@ public sealed class DeletionService
 
     private static bool IsSharingViolation(int hResult) =>
         (hResult & 0xFFFF) is 32 or 33;
+
+    private sealed class SecureEraseRefusedException(DeletionIssueCode code, string message)
+        : Exception(message)
+    {
+        public DeletionIssueCode Code { get; } = code;
+    }
 }

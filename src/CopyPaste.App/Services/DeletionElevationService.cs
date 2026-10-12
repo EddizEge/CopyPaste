@@ -7,13 +7,23 @@ using CopyPaste.Core.Services;
 
 namespace CopyPaste.App.Services;
 
-public sealed record ElevatedDeletionRequest(
-    IReadOnlyList<string> Paths,
-    DeletionMode Mode,
-    string PlanFingerprint,
-    string CancelFile);
+public enum ElevatedDeletionFailureKind
+{
+    RequestRejected,
+    BrokerFailed,
+    NoResult
+}
 
-public sealed record ElevatedDeletionResponse(DeletionResult? Result, string? Error);
+public sealed record ElevatedDeletionResponse(
+    DeletionResult? Result,
+    string? Error,
+    ElevatedDeletionFailureKind? FailureKind = null);
+
+public sealed class ElevatedDeletionException(ElevatedDeletionFailureKind kind, string message)
+    : InvalidOperationException(message)
+{
+    public ElevatedDeletionFailureKind Kind { get; } = kind;
+}
 
 public static class DeletionElevationService
 {
@@ -93,13 +103,12 @@ public static class DeletionElevationService
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
             });
             await process.WaitForExitAsync(CancellationToken.None).ConfigureAwait(false);
-            if (!File.Exists(responseFile))
-                throw new InvalidOperationException("The elevated deletion process did not return a result.");
-            var response = JsonSerializer.Deserialize<ElevatedDeletionResponse>(
-                await File.ReadAllTextAsync(responseFile, CancellationToken.None).ConfigureAwait(false), JsonOptions);
-            if (response?.Result is not null)
+            var response = await ReadResponseAsync(responseFile).ConfigureAwait(false);
+            if (response.Result is not null)
                 return response.Result;
-            throw new InvalidOperationException(response?.Error ?? "The elevated deletion process failed.");
+            throw new ElevatedDeletionException(
+                response.FailureKind ?? ElevatedDeletionFailureKind.BrokerFailed,
+                response.Error ?? "The elevated deletion process failed.");
         }
         catch (Win32Exception ex) when (ex.NativeErrorCode == 1223)
         {
@@ -117,6 +126,26 @@ public static class DeletionElevationService
         }
     }
 
+    private static async Task<ElevatedDeletionResponse> ReadResponseAsync(string responseFile)
+    {
+        try
+        {
+            if (!File.Exists(responseFile))
+                throw new ElevatedDeletionException(ElevatedDeletionFailureKind.NoResult,
+                    "The elevated deletion process did not return a result.");
+            return JsonSerializer.Deserialize<ElevatedDeletionResponse>(
+                       await File.ReadAllTextAsync(responseFile, CancellationToken.None).ConfigureAwait(false),
+                       JsonOptions)
+                   ?? throw new ElevatedDeletionException(ElevatedDeletionFailureKind.NoResult,
+                       "The elevated deletion process returned an empty result.");
+        }
+        catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException
+            or NotSupportedException)
+        {
+            throw new ElevatedDeletionException(ElevatedDeletionFailureKind.NoResult, ex.Message);
+        }
+    }
+
     public static async Task<bool> TryHandleElevatedRequestAsync(string[] commandLine)
     {
         var requestFile = GetArgumentValue(commandLine, "--elevated-delete-request");
@@ -127,6 +156,7 @@ public static class DeletionElevationService
             return true;
 
         ElevatedDeletionResponse response;
+        var deletionStarted = false;
         try
         {
             EnsureBrokerPath(requestFile, ".request.json");
@@ -136,12 +166,11 @@ public static class DeletionElevationService
                 || (requestInfo.Attributes & FileAttributes.ReparsePoint) != 0)
                 throw new InvalidOperationException("The elevated deletion request is invalid.");
             var request = JsonSerializer.Deserialize<ElevatedDeletionRequest>(
-                await File.ReadAllTextAsync(requestFile).ConfigureAwait(false), JsonOptions)
-                ?? throw new InvalidOperationException("The elevated deletion request is empty.");
-            EnsureBrokerPath(request.CancelFile, ".cancel");
-            if (request.Mode == DeletionMode.RecycleBin || request.Paths.Count == 0
-                || string.IsNullOrWhiteSpace(request.PlanFingerprint))
-                throw new InvalidOperationException("The elevated deletion mode or target list is invalid.");
+                await File.ReadAllTextAsync(requestFile).ConfigureAwait(false), JsonOptions);
+            var validation = DeletionElevationRequestValidator.Validate(request);
+            if (!validation.IsValid)
+                throw new InvalidOperationException(validation.Message);
+            EnsureBrokerPath(request!.CancelFile, ".cancel");
 
             var planner = new DeletionPlanner();
             var plan = await planner.CreateAsync(request.Paths, request.Mode).ConfigureAwait(false);
@@ -161,6 +190,7 @@ public static class DeletionElevationService
             {
                 using var cancellationSource = new CancellationTokenSource();
                 var monitor = MonitorCancellationFileAsync(request.CancelFile, cancellationSource);
+                deletionStarted = true;
                 var result = await new DeletionService(planner)
                     .ExecuteAsync(plan, cancellationToken: cancellationSource.Token).ConfigureAwait(false);
                 cancellationSource.Cancel();
@@ -168,10 +198,12 @@ public static class DeletionElevationService
                 response = new(result, null);
             }
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException
-            or InvalidOperationException or JsonException or ArgumentException)
+        catch (Exception ex)
         {
-            response = new(null, ex.Message);
+            // The broker must always answer and exit; an escaped exception would crash async void OnLaunched.
+            response = new(null, ex.Message, deletionStarted
+                ? ElevatedDeletionFailureKind.BrokerFailed
+                : ElevatedDeletionFailureKind.RequestRejected);
         }
 
         try
@@ -180,9 +212,9 @@ public static class DeletionElevationService
             await File.WriteAllTextAsync(responseFile,
                 JsonSerializer.Serialize(response, JsonOptions)).ConfigureAwait(false);
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException
-            or InvalidOperationException or ArgumentException)
+        catch (Exception)
         {
+            // Without a response file the medium-integrity side reports an unknown result.
         }
         return true;
     }
