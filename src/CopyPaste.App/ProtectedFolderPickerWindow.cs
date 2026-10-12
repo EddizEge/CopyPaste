@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using CopyPaste.App.Services;
 using CopyPaste.Core.Services;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
@@ -32,7 +33,9 @@ public sealed class ProtectedFolderPickerWindow : Window
         _english = english;
         Title = T("CopyPaste — Korumalı kaynakları seç", "CopyPaste — Select protected sources");
         var windowId = Microsoft.UI.Win32Interop.GetWindowIdFromWindow(WindowNative.GetWindowHandle(this));
-        AppWindow.GetFromWindowId(windowId).Resize(new Windows.Graphics.SizeInt32(800, 660));
+        var appWindow = AppWindow.GetFromWindowId(windowId);
+        appWindow.Resize(new Windows.Graphics.SizeInt32(800, 660));
+        TitleBarThemeService.AttachSystemTheme(appWindow);
 
         _pathBox.PlaceholderText = T("Klasör yolunu yazabilir veya listeden gezebilirsiniz",
             "Type a folder path or browse the list");

@@ -14,8 +14,8 @@
         <Border Background="#111319" BorderBrush="#292E38" BorderThickness="0,0,0,1">
             <Grid x:Name="AppTitleBar" Padding="22,0" ColumnSpacing="18">
                 <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="Auto" />
-                    <ColumnDefinition Width="*" />
+                    <!-- Dar pencerede önce başlık metni kırpılır; logo görünür kalır. -->
+                    <ColumnDefinition Width="*" MinWidth="38" />
                     <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
                 <StackPanel Orientation="Horizontal" Spacing="11" VerticalAlignment="Center">
@@ -32,18 +32,22 @@
                         <TextBlock Text="Robocopy ile hızlı ve doğrulanabilir transfer" Style="{StaticResource MutedTextStyle}" />
                     </StackPanel>
                 </StackPanel>
-                <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center"
-                            Margin="0,0,138,0">
-                    <Button x:Name="DeletionToolButton" Content="Dosya silme"
-                            Style="{StaticResource QuietButtonStyle}" Click="DeletionToolButton_Click" />
-                    <Button x:Name="ReleaseNotesButton" Content="Sürüm notları"
-                            Style="{StaticResource QuietButtonStyle}" Click="ReleaseNotesButton_Click" />
-                    <Button x:Name="CheckUpdatesButton" Content="Güncellemeler" Style="{StaticResource QuietButtonStyle}"
-                            Click="CheckUpdatesButton_Click" />
-                    <Button Content="Geçmiş" Style="{StaticResource QuietButtonStyle}" Click="HistoryButton_Click" />
-                    <Button Content="Zamanlama" Style="{StaticResource QuietButtonStyle}" Click="ScheduleButton_Click" />
-                    <Button Content="Ayarlar" Style="{StaticResource QuietButtonStyle}" Click="SettingsButton_Click" />
-                </StackPanel>
+                <!-- Menü başlık düğmelerinin altına girmez: sağ pay sistem düğmelerine göre, sığmazsa yatay kayar. -->
+                <ScrollViewer x:Name="TitleBarActions" Grid.Column="1" VerticalAlignment="Center" Margin="0,0,138,0"
+                              HorizontalScrollMode="Enabled" HorizontalScrollBarVisibility="Hidden"
+                              VerticalScrollMode="Disabled" VerticalScrollBarVisibility="Disabled" ZoomMode="Disabled">
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <Button x:Name="DeletionToolButton" Content="Dosya silme"
+                                Style="{StaticResource QuietButtonStyle}" Click="DeletionToolButton_Click" />
+                        <Button x:Name="ReleaseNotesButton" Content="Sürüm notları"
+                                Style="{StaticResource QuietButtonStyle}" Click="ReleaseNotesButton_Click" />
+                        <Button x:Name="CheckUpdatesButton" Content="Güncellemeler" Style="{StaticResource QuietButtonStyle}"
+                                Click="CheckUpdatesButton_Click" />
+                        <Button Content="Geçmiş" Style="{StaticResource QuietButtonStyle}" Click="HistoryButton_Click" />
+                        <Button Content="Zamanlama" Style="{StaticResource QuietButtonStyle}" Click="ScheduleButton_Click" />
+                        <Button Content="Ayarlar" Style="{StaticResource QuietButtonStyle}" Click="SettingsButton_Click" />
+                    </StackPanel>
+                </ScrollViewer>
             </Grid>
         </Border>
 

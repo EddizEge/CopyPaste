@@ -10,6 +10,7 @@
 - İptal ve öğe bazlı kısmi sonuçlar, kısmen üzerine yazılmış dosyalar için yanıltıcı olmayan durumlarla raporlanıyor.
 - Windows x64 portable ZIP gerçek self-contained yayın olarak üretilecek, sessiz açılış smoke testinden geçecek ve 1.7.5 sonrası her sürümde SHA-256 listesine zorunlu olarak eklenecek.
 - Portable çalışma işaretçisi ve paket seçimi eklendi; uygulama içi güncelleyici portable kullanımda Setup yerine SHA-256 doğrulamalı ZIP indirip güvenli elle çıkarma için klasörünü açıyor.
+- Başlık çubuğu düğmeleri koyu/mor palete göre renklendirildi: küçült/büyüt/kapat simgeleri pencere arka plandayken de okunuyor, üzerine gelme/basma durumları mor tonda; yüksek karşıtlık modunda sistem renkleri kullanılıyor. Ana pencerede uzun başlık düğmeleri kullanılıyor ve menü, dar pencerede sistem düğmelerinin altına girmek yerine kırpılıp yatay kayıyor. Silme aracının ayrı yönetici penceresinde de koyu başlık uygulanıyor. Korumalı klasör seçicinin başlığı Windows açık/koyu temasını izliyor.
 
 ## 1.7.0
 

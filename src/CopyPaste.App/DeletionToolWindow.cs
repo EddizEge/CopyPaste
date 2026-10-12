@@ -24,6 +24,7 @@ public sealed class DeletionToolWindow : Window
         var windowId = Microsoft.UI.Win32Interop.GetWindowIdFromWindow(WindowNative.GetWindowHandle(this));
         var appWindow = AppWindow.GetFromWindowId(windowId);
         appWindow.Resize(new Windows.Graphics.SizeInt32(920, 760));
+        TitleBarThemeService.AttachStandard(this, appWindow);
         _view = new DeletionToolView(english, this, Close);
         appWindow.Closing += (_, args) => args.Cancel = !_view.RequestNavigateAway();
         Content = _view;

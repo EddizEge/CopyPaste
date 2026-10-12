@@ -94,8 +94,9 @@ public sealed partial class MainWindow : Window
         _appWindow = AppWindow.GetFromWindowId(windowId);
         ExtendsContentIntoTitleBar = true;
         SetTitleBar(AppTitleBar);
-        _appWindow.TitleBar.ButtonBackgroundColor = Microsoft.UI.Colors.Transparent;
-        _appWindow.TitleBar.ButtonInactiveBackgroundColor = Microsoft.UI.Colors.Transparent;
+        // Başlık satırı 64 px; uzun başlık düğmeleri bu satıra daha iyi oturur.
+        _appWindow.TitleBar.PreferredHeightOption = TitleBarHeightOption.Tall;
+        TitleBarThemeService.AttachExtended(this, _appWindow);
         VersionBadgeText.Text = GetCurrentVersion().ToString(3);
         _appWindow.Resize(new Windows.Graphics.SizeInt32(1380, 880));
         _appWindow.Closing += AppWindow_Closing;
@@ -175,6 +176,24 @@ public sealed partial class MainWindow : Window
             return;
         _rootLoaded = true;
         ApplyLanguage(_settings.Language);
+        UpdateTitleBarActionsInset();
+        // Boyut ve DPI değişimlerinde başlık düğmelerinin genişliği değişebilir.
+        RootGrid.XamlRoot.Changed += (_, _) => UpdateTitleBarActionsInset();
+    }
+
+    private void UpdateTitleBarActionsInset()
+    {
+        if (RootGrid.XamlRoot is not { } xamlRoot)
+            return;
+        var scale = xamlRoot.RasterizationScale;
+        var rightInset = _appWindow.TitleBar.RightInset;
+        // Ölçülemezse XAML'deki 138 px varsayılanı kalır.
+        if (scale > 0 && rightInset > 0)
+            TitleBarActions.Margin = new Thickness(0, 0, rightInset / scale, 0);
+        // Menü yalnız logo ve sistem düğmeleri dışında kalan genişliği kullanır; fazlası yatay kayar.
+        var titleBarPadding = AppTitleBar.Padding.Left + AppTitleBar.Padding.Right;
+        TitleBarActions.MaxWidth = Math.Max(0, xamlRoot.Size.Width - titleBarPadding - AppTitleBar.ColumnSpacing
+            - AppTitleBar.ColumnDefinitions[0].MinWidth - TitleBarActions.Margin.Right);
     }
 
     private async void CheckUpdatesButton_Click(object sender, RoutedEventArgs e) =>
