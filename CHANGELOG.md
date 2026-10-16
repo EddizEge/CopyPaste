@@ -11,6 +11,7 @@
 - Windows x64 portable ZIP gerçek self-contained yayın olarak üretilecek, sessiz açılış smoke testinden geçecek ve 1.7.5 sonrası her sürümde SHA-256 listesine zorunlu olarak eklenecek.
 - Portable çalışma işaretçisi ve paket seçimi eklendi; uygulama içi güncelleyici portable kullanımda Setup yerine SHA-256 doğrulamalı ZIP indirip güvenli elle çıkarma için klasörünü açıyor.
 - Başlık çubuğu düğmeleri koyu/mor palete göre renklendirildi: küçült/büyüt/kapat simgeleri pencere arka plandayken de okunuyor, üzerine gelme/basma durumları mor tonda; yüksek karşıtlık modunda sistem renkleri kullanılıyor. Ana pencerede uzun başlık düğmeleri kullanılıyor ve menü, dar pencerede sistem düğmelerinin altına girmek yerine kırpılıp yatay kayıyor. Silme aracının ayrı yönetici penceresinde de koyu başlık uygulanıyor. Korumalı klasör seçicinin başlığı Windows açık/koyu temasını izliyor.
+- iPhone, Android telefon veya başka bir taşınabilir aygıt kaynak ya da hedef olarak seçildiğinde (klasör seçici, sürükle-bırak veya elle yazılan aygıt/kabuk yolu) alan sessizce boşaltılmıyor; Robocopy'nin bu aygıtlara doğrudan erişemediği ve dosyaların önce Fotoğraflar uygulaması ya da Dosya Gezgini ile yerel bir klasöre aktarılması gerektiği Türkçe/İngilizce açıklanıyor. Göreli yollar için tam yol isteniyor; silme aracı da yolu olmayan aygıt öğelerini sessizce yok saymak yerine bildiriyor.
 
 ## 1.7.0
 

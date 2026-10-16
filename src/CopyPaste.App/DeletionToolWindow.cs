@@ -255,8 +255,16 @@ public sealed class DeletionToolView : UserControl
             var picker = new FileOpenPicker();
             picker.FileTypeFilter.Add("*");
             InitializeWithWindow.Initialize(picker, WindowNative.GetWindowHandle(_owner));
+            var skipped = 0;
             foreach (var file in await picker.PickMultipleFilesAsync())
-                AddPath(file.Path);
+            {
+                if (string.IsNullOrEmpty(file.Path))
+                    skipped++;
+                else
+                    AddPath(file.Path);
+            }
+            if (skipped > 0)
+                ShowNoFileSystemPathNotice(skipped);
         }
         catch (Exception ex) when (ex is UnauthorizedAccessException or InvalidOperationException
             or COMException)
@@ -276,7 +284,11 @@ public sealed class DeletionToolView : UserControl
             picker.FileTypeFilter.Add("*");
             InitializeWithWindow.Initialize(picker, WindowNative.GetWindowHandle(_owner));
             var folder = await picker.PickSingleFolderAsync();
-            if (folder is not null)
+            if (folder is null)
+                return;
+            if (string.IsNullOrEmpty(folder.Path))
+                ShowNoFileSystemPathNotice(1);
+            else
                 AddPath(folder.Path);
         }
         catch (Exception ex) when (ex is UnauthorizedAccessException or InvalidOperationException
@@ -298,6 +310,19 @@ public sealed class DeletionToolView : UserControl
             _paths.Add(candidate);
         _manualPath.Text = string.Empty;
         InvalidatePreview();
+    }
+
+    // Phones and other portable devices come back from the pickers without a file-system path.
+    private void ShowNoFileSystemPathNotice(int count)
+    {
+        _summary.Text = count == 1
+            ? T("Seçilen öğe listeye eklenmedi: gerçek bir dosya sistemi yolu yok.",
+                "The selected item was not added: it has no real file-system path.")
+            : T($"Seçilen {count:N0} öğe listeye eklenmedi: gerçek bir dosya sistemi yolu yok.",
+                $"{count:N0} selected items were not added: they have no real file-system path.");
+        _details.Text = T(
+            "Telefon veya taşınabilir aygıttaki (iPhone, Android) dosyalar Windows'ta sürücü olarak görünmediği için bu araçla silinemez. Gerekirse bunları aygıtın kendisinden silin.",
+            "Files on a phone or portable device (iPhone, Android) can't be deleted with this tool because they don't appear as a drive in Windows. If needed, delete them on the device itself.");
     }
 
     private void RemoveSelectedPaths()

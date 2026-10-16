@@ -571,7 +571,12 @@ public sealed partial class MainWindow : Window
         if (folder is null)
             return;
 
-        if ((sender as FrameworkElement)?.Tag?.ToString() == "Source")
+        var isSource = (sender as FrameworkElement)?.Tag?.ToString() == "Source";
+        // Phones and other portable devices come back as a StorageFolder without a file-system path.
+        if (RejectPickedNonFileSystemFolder(folder.Path, isSource))
+            return;
+
+        if (isSource)
         {
             SourceTextBox.Text = folder.Path;
             _useBackupModeForSource = false;
@@ -593,8 +598,8 @@ public sealed partial class MainWindow : Window
             return;
         try
         {
-            if (string.IsNullOrWhiteSpace(SourceTextBox.Text)
-                || string.IsNullOrWhiteSpace(DestinationTextBox.Text))
+            if (!TransferPathClassifier.IsFileSystem(SourceTextBox.Text)
+                || !TransferPathClassifier.IsFileSystem(DestinationTextBox.Text))
             {
                 ResolvedDestinationBar.Visibility = Visibility.Collapsed;
                 return;
@@ -865,6 +870,8 @@ public sealed partial class MainWindow : Window
             ValidationInfoBar.Visibility = Visibility.Visible;
             return null;
         }
+        if (RejectNonFileSystemTransferPaths())
+            return null;
         try
         {
             var source = Path.GetFullPath(SourceTextBox.Text.Trim());
@@ -907,6 +914,8 @@ public sealed partial class MainWindow : Window
         PreflightInfoBar.Visibility = Visibility.Collapsed;
         var rootMode = (CopyRootModeComboBox.SelectedItem as OptionChoice<CopyRootMode>)?.Value
             ?? CopyRootMode.SelectedFolder;
+        if (RejectNonFileSystemTransferPaths())
+            return false;
         string sourcePath;
         string destinationRootPath;
         string destinationPath;
@@ -1566,10 +1575,17 @@ public sealed partial class MainWindow : Window
         var items = await e.DataView.GetStorageItemsAsync();
         if (items.FirstOrDefault(item => item is StorageFolder) is StorageFolder folder)
         {
+            if (RejectPickedNonFileSystemFolder(folder.Path, isSource: true))
+                return;
             SourceTextBox.Text = folder.Path;
             DropHintText.Text = T($"Kaynak seçildi: {folder.Name}", $"Source selected: {folder.Name}");
             PreflightInfoBar.Visibility = Visibility.Collapsed;
             ValidationInfoBar.Visibility = Visibility.Collapsed;
+        }
+        else if (items.Count > 0 && items.All(item => string.IsNullOrEmpty(item.Path)))
+        {
+            // Files dragged straight from a phone have no file-system path either.
+            ShowTransferPathWarning(TransferPathKind.PortableDevice, isSource: true);
         }
     }
 
@@ -2078,6 +2094,8 @@ public sealed partial class MainWindow : Window
         }
         else
         {
+            if (RejectNonFileSystemTransferPaths())
+                return;
             var validation = CopyJobValidator.Validate(SourceTextBox.Text, DestinationTextBox.Text);
             if (!validation.IsValid
                 || ProfileComboBox.SelectedItem is not CopyProfile profile
@@ -2610,6 +2628,67 @@ public sealed partial class MainWindow : Window
 
     private string T(string turkish, string english) =>
         LocalizationService.IsEnglish(_language) ? english : turkish;
+
+    // Picked or dropped folders: an empty path means a shell-only item such as a phone.
+    private bool RejectPickedNonFileSystemFolder(string? path, bool isSource)
+    {
+        var kind = string.IsNullOrEmpty(path)
+            ? TransferPathKind.PortableDevice
+            : TransferPathClassifier.Classify(path);
+        if (kind == TransferPathKind.FileSystem)
+            return false;
+        ShowTransferPathWarning(kind, isSource);
+        return true;
+    }
+
+    // Typed paths: empty fields keep the existing validation message.
+    private bool RejectNonFileSystemTransferPaths()
+    {
+        foreach (var (path, isSource) in new[] { (SourceTextBox.Text, true), (DestinationTextBox.Text, false) })
+        {
+            var kind = TransferPathClassifier.Classify(path);
+            if (kind is TransferPathKind.Empty or TransferPathKind.FileSystem)
+                continue;
+            ShowTransferPathWarning(kind, isSource);
+            return true;
+        }
+        return false;
+    }
+
+    private void ShowTransferPathWarning(TransferPathKind kind, bool isSource)
+    {
+        ValidationText.Text = GetTransferPathWarning(kind, isSource);
+        ValidationInfoBar.Visibility = Visibility.Visible;
+        PreflightInfoBar.Visibility = Visibility.Collapsed;
+    }
+
+    private string GetTransferPathWarning(TransferPathKind kind, bool isSource) => (kind, isSource) switch
+    {
+        (TransferPathKind.NotRooted, true) => T(
+            @"Kaynak için tam bir klasör yolu girin (ör. C:\Fotoğraflar veya \\NAS\Paylaşım).",
+            @"Enter a full folder path for the source (for example C:\Photos or \\NAS\Share)."),
+        (TransferPathKind.NotRooted, false) => T(
+            @"Hedef için tam bir klasör yolu girin (ör. D:\Yedek veya \\NAS\Paylaşım).",
+            @"Enter a full folder path for the destination (for example D:\Backup or \\NAS\Share)."),
+        (TransferPathKind.ShellNamespace, true) => T(
+            @"Bu konum gerçek bir klasör yolu değil, Windows'un sanal bir konumu. Kaynak olarak bir sürücüdeki ya da ağ paylaşımındaki klasörü seçin veya tam yolunu girin (ör. C:\Fotoğraflar). Telefon veya taşınabilir aygıttaki dosyaları önce yerel bir klasöre aktarın.",
+            @"This location is a virtual Windows location, not a real folder path. Choose a folder on a drive or network share as the source, or enter its full path (for example C:\Photos). Transfer files on a phone or portable device to a local folder first."),
+        (TransferPathKind.ShellNamespace, false) => T(
+            @"Bu konum gerçek bir klasör yolu değil, Windows'un sanal bir konumu. Hedef olarak bir sürücüdeki ya da ağ paylaşımındaki klasörü seçin veya tam yolunu girin (ör. D:\Yedek). Telefon veya taşınabilir aygıt hedef olarak seçilemez.",
+            @"This location is a virtual Windows location, not a real folder path. Choose a folder on a drive or network share as the destination, or enter its full path (for example D:\Backup). A phone or portable device can't be the destination."),
+        (_, true) => T(
+            "Telefon veya taşınabilir aygıt seçildi. iPhone ve Android telefonlar Windows'ta sürücü olarak görünmez; Robocopy bunlardan doğrudan kopyalayamaz. " +
+            "Önce Fotoğraflar uygulamasının İçeri aktar seçeneğiyle ya da Dosya Gezgini ile yerel bir klasöre aktarın, sonra o klasörü kaynak seçin. " +
+            "İpucu: iPhone'dan aktarma hata verirse iPhone'da Ayarlar > Fotoğraflar > Mac'e veya PC'ye Aktar > Orijinalleri Koru'yu seçin.",
+            "A phone or portable device was selected. iPhone and Android phones don't appear as drives in Windows, so Robocopy can't copy from them directly. " +
+            "First transfer the files to a local folder with the Photos app's Import option or File Explorer, then choose that folder as the source. " +
+            "Tip: if an iPhone transfer fails, choose Settings > Photos > Transfer to Mac or PC > Keep Originals on the iPhone."),
+        _ => T(
+            "Telefon veya taşınabilir aygıt hedef olarak seçilemez. iPhone ve Android telefonlar Windows'ta sürücü olarak görünmez; Robocopy bunlara doğrudan yazamaz. " +
+            "Bu bilgisayardaki ya da harici bir sürücüdeki klasörü hedef seçin.",
+            "A phone or portable device can't be the destination. iPhone and Android phones don't appear as drives in Windows, so Robocopy can't write to them directly. " +
+            "Choose a folder on this PC or on an external drive as the destination.")
+    };
 
     private string LocalizeSummary(string? summary)
     {

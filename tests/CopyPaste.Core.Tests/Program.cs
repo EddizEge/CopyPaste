@@ -32,6 +32,38 @@ Assert(protectedSelection.SequenceEqual([@"C:\Korumalı\Bir", @"C:\Korumalı\İk
        && ProtectedFolderSelectionSerializer.Parse(@"C:\Eski-Tek-Seçim").Count == 1,
     "Korumalı çoklu klasör seçimi benzersiz JSON yollarını ve eski tek-yol biçimini desteklemeli");
 
+var transferPathCases = new (string? Path, TransferPathKind Expected)[]
+{
+    (null, TransferPathKind.Empty),
+    ("", TransferPathKind.Empty),
+    ("   ", TransferPathKind.Empty),
+    (@"C:\Foto", TransferPathKind.FileSystem),
+    (@"D:\", TransferPathKind.FileSystem),
+    (@"\\NAS\paylaşım\x", TransferPathKind.FileSystem),
+    (@"\\?\C:\uzun\yol", TransferPathKind.FileSystem),
+    (@"\\?\UNC\NAS\p", TransferPathKind.FileSystem),
+    (@"  E:\Yedek\Tatil 2026  ", TransferPathKind.FileSystem),
+    (@"::{20D04FE0-3AEA-1069-A2D8-08002B30309D}\\\?\usb#vid_05ac&pid_12a8#0000#{6ac27878-a6fa-4155-ba85-f98f491d4f33}\SID-{10001,,1}\DCIM",
+        TransferPathKind.PortableDevice),
+    (@"\\?\usb#vid_05ac&pid_12a8#00008110000000000000#{6ac27878-a6fa-4155-ba85-f98f491d4f33}", TransferPathKind.PortableDevice),
+    (@"\\?\swd#wpdbusenum#_??_usbstor#disk&ven_samsung#{6ac27878-a6fa-4155-ba85-f98f491d4f33}", TransferPathKind.PortableDevice),
+    ("shell:MyComputerFolder", TransferPathKind.ShellNamespace),
+    ("::{20D04FE0-3AEA-1069-A2D8-08002B30309D}", TransferPathKind.ShellNamespace),
+    (@"Bu bilgisayar\Apple iPhone\Internal Storage", TransferPathKind.PortableDevice),
+    (@"This PC\Apple iPhone\Internal Storage\DCIM", TransferPathKind.PortableDevice),
+    (@"This PC\Local Disk (C:)\Foto", TransferPathKind.ShellNamespace),
+    ("This PC", TransferPathKind.ShellNamespace),
+    (@"Foto\Tatil", TransferPathKind.NotRooted),
+    (@"C:Foto", TransferPathKind.NotRooted),
+    (@"\Foto", TransferPathKind.NotRooted)
+};
+foreach (var (path, expected) in transferPathCases)
+{
+    var actual = TransferPathClassifier.Classify(path);
+    Assert(actual == expected,
+        $"Transfer yolu sınıflandırması '{path ?? "<null>"}' için {expected} olmalı, {actual} bulundu");
+}
+
 var partialOutput = new[]
 {
     @"2026/07/17 09:15:32 ERROR 5 (0x00000005) Copying File C:\Arşiv\kilitli-rapor.xlsx",
