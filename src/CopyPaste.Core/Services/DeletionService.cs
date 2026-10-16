@@ -1,6 +1,6 @@
+using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using CopyPaste.Core.Models;
-using Microsoft.VisualBasic.FileIO;
 
 namespace CopyPaste.Core.Services;
 
@@ -9,9 +9,13 @@ public sealed class DeletionService
     private const int SecureErasePasses = 3;
     private const int BufferSize = 1024 * 1024;
     private readonly DeletionPlanner _planner;
+    private readonly IRecycleBinSender _recycleBin;
 
-    public DeletionService(DeletionPlanner? planner = null) =>
+    public DeletionService(DeletionPlanner? planner = null, IRecycleBinSender? recycleBin = null)
+    {
         _planner = planner ?? new DeletionPlanner();
+        _recycleBin = recycleBin ?? new ShellRecycleBinSender();
+    }
 
     public Task<DeletionResult> ExecuteAsync(
         DeletionPlan plan,
@@ -29,44 +33,12 @@ public sealed class DeletionService
         IProgress<DeletionProgress>? progress,
         CancellationToken cancellationToken)
     {
+        if (plan.Mode == DeletionMode.RecycleBin)
+            return ExecuteRecycleBin(plan, progress, cancellationToken);
+
         var results = new List<DeletionItemResult>();
         var completed = 0;
         long processedBytes = 0;
-
-        if (plan.Mode == DeletionMode.RecycleBin)
-        {
-            var refreshed = _planner.Create(plan.RequestedPaths, DeletionMode.RecycleBin, cancellationToken);
-            if (!refreshed.IsValid || !PlansMatch(plan, refreshed))
-            {
-                var changedItems = refreshed.Issues.Count > 0
-                    ? refreshed.Issues.Select(issue => new DeletionItemResult(
-                        issue.Path, false, false, issue.Code, issue.Message)).ToArray()
-                    : plan.RequestedPaths.Select(path => new DeletionItemResult(
-                        path, false, false, DeletionIssueCode.ChangedAfterPreview,
-                        "A target changed after the deletion preview.")).ToArray();
-                return new(plan.Mode, changedItems, false);
-            }
-            foreach (var path in plan.RequestedPaths)
-            {
-                if (cancellationToken.IsCancellationRequested)
-                    return new(plan.Mode, results, true);
-                try
-                {
-                    DeleteToRecycleBin(path);
-                    results.Add(new(path, true, false));
-                }
-                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException
-                    or OperationCanceledException or InvalidOperationException)
-                {
-                    results.Add(Failure(path, ex, false));
-                }
-                completed++;
-                progress?.Report(new(path, completed, plan.RequestedPaths.Count,
-                    processedBytes, plan.TotalBytes, 0, 0));
-            }
-            return new(plan.Mode, results, false);
-        }
-
         foreach (var entry in plan.Entries)
         {
             if (cancellationToken.IsCancellationRequested)
@@ -131,6 +103,102 @@ public sealed class DeletionService
         }
         return new(plan.Mode, results, false);
     }
+
+    private DeletionResult ExecuteRecycleBin(
+        DeletionPlan plan,
+        IProgress<DeletionProgress>? progress,
+        CancellationToken cancellationToken)
+    {
+        var refreshed = _planner.Create(plan.RequestedPaths, DeletionMode.RecycleBin, cancellationToken);
+        if (!refreshed.IsValid || !PlansMatch(plan, refreshed))
+        {
+            var changedItems = refreshed.Issues.Count > 0
+                ? refreshed.Issues.Select(issue => new DeletionItemResult(
+                    issue.Path, false, false, issue.Code, issue.Message)).ToArray()
+                : plan.RequestedPaths.Select(path => new DeletionItemResult(
+                    path, false, false, DeletionIssueCode.ChangedAfterPreview,
+                    "A target changed after the deletion preview.")).ToArray();
+            return new(plan.Mode, changedItems, false);
+        }
+
+        var results = new List<DeletionItemResult>();
+        var entriesByRoot = DeletionPlanner.GroupEntriesByRoot(plan.RequestedPaths, plan.Entries);
+        long processedBytes = 0;
+        for (var index = 0; index < plan.RequestedPaths.Count; index++)
+        {
+            var path = plan.RequestedPaths[index];
+            if (cancellationToken.IsCancellationRequested)
+                return new(plan.Mode, results, true);
+            var rootEntries = entriesByRoot[path];
+            DeletionItemResult item;
+            // Re-read the Recycle Bin state just before this root so a setting changed meanwhile is honored.
+            if (_planner.TryGetRecycleBinIssue(path, rootEntries, out var issue))
+                item = new(path, false, false, issue.Code, issue.Message);
+            else
+            {
+                RecycleBinSendResult sent;
+                try
+                {
+                    sent = _recycleBin.Send(path, cancellationToken);
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException
+                    or COMException or InvalidOperationException)
+                {
+                    sent = new(RecycleBinSendStatus.Failed, ex.HResult, null, null, false);
+                }
+
+                // Canceled before the shell changed this root, as between roots.
+                if (sent.Status == RecycleBinSendStatus.Canceled)
+                    return new(plan.Mode, results, true);
+                item = ToRecycleResult(path, sent);
+                if (sent.Status == RecycleBinSendStatus.DeletedPermanently)
+                {
+                    // Never continue after an unconfirmed deletion; leave the remaining roots untouched.
+                    results.Add(item);
+                    results.AddRange(plan.RequestedPaths.Skip(index + 1).Select(remaining =>
+                        new DeletionItemResult(remaining, false, false, DeletionIssueCode.RecycleNotPossible,
+                            "Not processed: a previous item could not be confirmed in the Recycle Bin.")));
+                    return new(plan.Mode, results, false);
+                }
+            }
+            results.Add(item);
+            processedBytes += rootEntries.Where(entry => entry.Kind == DeletionEntryKind.File)
+                .Sum(entry => entry.Length);
+            progress?.Report(new(path, index + 1, plan.RequestedPaths.Count,
+                processedBytes, plan.TotalBytes, 0, 0));
+        }
+        return new(plan.Mode, results, false);
+    }
+
+    private static DeletionItemResult ToRecycleResult(string path, RecycleBinSendResult sent) => sent.Status switch
+    {
+        RecycleBinSendStatus.Recycled => new(path, true, false),
+        RecycleBinSendStatus.NotRecyclable => new(path, false, false, DeletionIssueCode.RecycleNotPossible,
+            sent.SomeContentRecycled
+                ? "Windows could not move this item to the Recycle Bin; it was not deleted permanently, and part of its content is in the Recycle Bin."
+                : "Windows could not move this item to the Recycle Bin; it was not deleted."),
+        RecycleBinSendStatus.DeletedPermanently => new(path, false, false,
+            DeletionIssueCode.DeletedWithoutRecycleBin,
+            "The item, or part of it, was removed without a confirmed Recycle Bin copy; Windows may have deleted it permanently."),
+        _ => RecycleFailure(path, sent.HResult)
+    };
+
+    private static DeletionItemResult RecycleFailure(string path, int hResult)
+    {
+        var code = GetRecycleFailureCode(hResult);
+        return new(path, false, false, code, code == DeletionIssueCode.Missing
+            ? "The target no longer exists."
+            : $"Windows could not move this item to the Recycle Bin (0x{hResult:X8}); it is still in place.");
+    }
+
+    private static DeletionIssueCode GetRecycleFailureCode(int hResult) => unchecked((uint)hResult) switch
+    {
+        0x80070002 or 0x80070003 => DeletionIssueCode.Missing,
+        0x80070005 or 0x80270002 or 0x80270021 => DeletionIssueCode.AccessDenied,
+        0x80070020 or 0x80070021 or 0x80270027 => DeletionIssueCode.InUse,
+        >= 0x80270080 and <= 0x8027008F => DeletionIssueCode.RecycleNotPossible,
+        _ => DeletionIssueCode.OperationFailed
+    };
 
     private static bool PlansMatch(DeletionPlan expected, DeletionPlan actual)
     {
@@ -226,17 +294,6 @@ public sealed class DeletionService
             Directory.Delete(entry.Path, recursive: false);
         else
             File.Delete(entry.Path);
-    }
-
-    private static void DeleteToRecycleBin(string path)
-    {
-        var attributes = File.GetAttributes(path);
-        if ((attributes & FileAttributes.Directory) != 0)
-            FileSystem.DeleteDirectory(path, UIOption.OnlyErrorDialogs,
-                RecycleOption.SendToRecycleBin, UICancelOption.ThrowException);
-        else
-            FileSystem.DeleteFile(path, UIOption.OnlyErrorDialogs,
-                RecycleOption.SendToRecycleBin, UICancelOption.ThrowException);
     }
 
     private static DeletionItemResult Failure(string path, Exception exception, bool partiallyOverwritten)

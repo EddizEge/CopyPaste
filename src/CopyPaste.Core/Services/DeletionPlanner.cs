@@ -6,14 +6,23 @@ namespace CopyPaste.Core.Services;
 
 public sealed class DeletionPlanner
 {
+    // MAX_PATH: the shell's Recycle Bin move is not reliable for longer source or $Recycle.Bin paths.
+    public const int RecycleBinMaxPath = 260;
+    // "$R" plus the six characters Windows generates for the Recycle Bin item name.
+    private const int RecycleBinItemNameLength = 8;
     private readonly string _windowsDirectory;
     private readonly string _applicationDirectory;
+    private readonly IRecycleBinStatusProvider _recycleBinStatus;
 
-    public DeletionPlanner(string? windowsDirectory = null, string? applicationDirectory = null)
+    public DeletionPlanner(
+        string? windowsDirectory = null,
+        string? applicationDirectory = null,
+        IRecycleBinStatusProvider? recycleBinStatus = null)
     {
         _windowsDirectory = NormalizeDirectory(windowsDirectory
             ?? Environment.GetFolderPath(Environment.SpecialFolder.Windows));
         _applicationDirectory = NormalizeDirectory(applicationDirectory ?? AppContext.BaseDirectory);
+        _recycleBinStatus = recycleBinStatus ?? WindowsRecycleBinStatusProvider.Instance;
     }
 
     public Task<DeletionPlan> CreateAsync(
@@ -61,7 +70,7 @@ public sealed class DeletionPlanner
         if (mode == DeletionMode.SecureErase)
             ValidateSecureErase(entries, issues);
         else if (mode == DeletionMode.RecycleBin)
-            ValidateRecycleBin(requested, issues);
+            ValidateRecycleBin(requested, entries, issues);
 
         var files = entries.Where(entry => entry.Kind == DeletionEntryKind.File).ToArray();
         var warnings = BuildWarnings(mode);
@@ -211,16 +220,97 @@ public sealed class DeletionPlanner
         return true;
     }
 
-    private static void ValidateRecycleBin(
-        IEnumerable<string> paths,
+    private void ValidateRecycleBin(
+        IEnumerable<string> roots,
+        IReadOnlyList<DeletionEntry> entries,
         ICollection<DeletionIssue> issues)
     {
-        foreach (var path in paths)
+        var rootList = roots.ToArray();
+        var grouped = GroupEntriesByRoot(rootList, entries);
+        foreach (var root in rootList)
         {
-            if (!TryGetDrive(path, out var drive) || drive.DriveType != DriveType.Fixed || !drive.IsReady)
-                issues.Add(new(path, DeletionIssueCode.UnsupportedStorage,
-                    "Recycle Bin deletion is limited to ready local fixed volumes."));
+            if (TryGetRecycleBinIssue(root, grouped[root], out var issue))
+                issues.Add(issue);
         }
+    }
+
+    // Walks each entry's ancestors instead of testing every root, so large selections stay linear.
+    public static IReadOnlyDictionary<string, IReadOnlyList<DeletionEntry>> GroupEntriesByRoot(
+        IEnumerable<string> roots,
+        IEnumerable<DeletionEntry> entries)
+    {
+        var grouped = new Dictionary<string, List<DeletionEntry>>(StringComparer.OrdinalIgnoreCase);
+        foreach (var root in roots)
+            grouped.TryAdd(Path.TrimEndingDirectorySeparator(root), []);
+        foreach (var entry in entries)
+        {
+            for (var candidate = Path.TrimEndingDirectorySeparator(entry.Path);
+                 !string.IsNullOrEmpty(candidate);
+                 candidate = Path.GetDirectoryName(candidate))
+            {
+                if (grouped.TryGetValue(candidate, out var rootEntries))
+                {
+                    rootEntries.Add(entry);
+                    break;
+                }
+            }
+        }
+        return grouped.ToDictionary(pair => pair.Key, pair => (IReadOnlyList<DeletionEntry>)pair.Value,
+            StringComparer.OrdinalIgnoreCase);
+    }
+
+    // Blocks only states that were read with certainty; unknown values are left to the runtime guard.
+    public bool TryGetRecycleBinIssue(string root, IReadOnlyList<DeletionEntry> rootEntries, out DeletionIssue issue)
+    {
+        issue = null!;
+        if (!TryGetDrive(root, out var drive) || drive.DriveType != DriveType.Fixed || !drive.IsReady)
+        {
+            issue = new(root, DeletionIssueCode.UnsupportedStorage,
+                "Recycle Bin deletion is limited to ready local fixed volumes.");
+            return true;
+        }
+
+        RecycleBinVolumeStatus status;
+        try
+        {
+            status = _recycleBinStatus.GetStatus(root);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException
+            or System.Security.SecurityException or InvalidOperationException or ArgumentException)
+        {
+            return false;
+        }
+
+        if (status.DisabledByPolicy == true || status.NukeOnDelete == true)
+        {
+            issue = new(root, DeletionIssueCode.RecycleBinDisabled,
+                "The Recycle Bin is turned off for this volume or by policy; Windows would delete the item permanently.");
+            return true;
+        }
+
+        var rootBytes = rootEntries.Where(entry => entry.Kind == DeletionEntryKind.File).Sum(entry => entry.Length);
+        if (status.MaxCapacityBytes is { } capacity && rootBytes > capacity)
+        {
+            issue = new(root, DeletionIssueCode.ExceedsRecycleBinCapacity,
+                $"The item ({rootBytes:N0} bytes) is larger than this volume's Recycle Bin capacity ({capacity:N0} bytes); Windows would delete it permanently.");
+            return true;
+        }
+
+        var recyclePrefixLength = status.RecycleDirectory is { } directory
+            ? Path.TrimEndingDirectorySeparator(directory).Length + 1 + RecycleBinItemNameLength
+              + Path.GetExtension(root).Length
+            : (int?)null;
+        foreach (var entry in rootEntries)
+        {
+            var recyclePathLength = recyclePrefixLength + (entry.Path.Length - root.Length);
+            if (entry.Path.Length >= RecycleBinMaxPath || recyclePathLength >= RecycleBinMaxPath)
+            {
+                issue = new(entry.Path, DeletionIssueCode.RecyclePathTooLong,
+                    "This path is too long for the Recycle Bin; Windows could delete the item permanently.");
+                return true;
+            }
+        }
+        return false;
     }
 
     private bool TryGetProtectedReason(

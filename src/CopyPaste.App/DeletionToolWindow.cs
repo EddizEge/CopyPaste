@@ -554,14 +554,64 @@ public sealed class DeletionToolView : UserControl
             : T($"İşlem tamamlandı • {result.SucceededCount} başarılı • {result.FailedCount} başarısız",
                 $"Operation completed • {result.SucceededCount} succeeded • {result.FailedCount} failed");
         var failed = result.Items.Where(item => !item.Succeeded).Take(12).ToArray();
-        _details.Text = failed.Length == 0
-            ? T("Seçilen hedefler işlendi.", "The selected targets were processed.")
-            : string.Join("\n", failed.Select(item =>
-                $"• {item.Path}\n  {item.ErrorMessage}"
+        if (failed.Length == 0)
+        {
+            _details.Text = result.Mode != DeletionMode.RecycleBin
+                ? T("Seçilen hedefler işlendi.", "The selected targets were processed.")
+                : result.WasCanceled
+                    ? T("İptalden önce taşınan öğeler Geri Dönüşüm Kutusu'nda; kalan hedefler değiştirilmedi.",
+                        "Items moved before cancellation are in the Recycle Bin; the remaining targets weren't changed.")
+                    : T("Seçilen hedefler Geri Dönüşüm Kutusu'na taşındı.",
+                        "The selected targets were moved to the Recycle Bin.");
+            return;
+        }
+        _details.Text = DescribeRecycleOutcome(result)
+            + string.Join("\n", failed.Select(item =>
+                $"• {item.Path}\n  {DescribeFailure(result.Mode, item)}"
                 + (item.PartiallyOverwritten
                     ? T("\n  Uyarı: dosya kısmen veya tamamen üzerine yazılmış olabilir.",
                         "\n  Warning: the file may have been partially or fully overwritten.")
                     : string.Empty)));
+    }
+
+    private string DescribeRecycleOutcome(DeletionResult result)
+    {
+        if (result.Mode != DeletionMode.RecycleBin)
+            return string.Empty;
+        if (result.Items.Any(item => item.ErrorCode == DeletionIssueCode.DeletedWithoutRecycleBin))
+            return T("Bir öğe Geri Dönüşüm Kutusu'nda doğrulanamadı; CopyPaste sonraki hedeflere dokunmadan durdu.\n",
+                "An item couldn't be confirmed in the Recycle Bin; CopyPaste stopped without touching the next targets.\n");
+        return result.Items.Any(item => item.ErrorCode is DeletionIssueCode.RecycleBinDisabled
+                or DeletionIssueCode.ExceedsRecycleBinCapacity or DeletionIssueCode.RecyclePathTooLong
+                or DeletionIssueCode.RecycleNotPossible)
+            ? T("Geri Dönüşüm Kutusu'na taşınamayan öğeler silinmedi; yerinde duruyor.\n",
+                "Items that couldn't be moved to the Recycle Bin weren't deleted; they're still in place.\n")
+            : string.Empty;
+    }
+
+    // Recycle Bin results get localized reasons; other modes keep their exact technical messages.
+    private string DescribeFailure(DeletionMode mode, DeletionItemResult item)
+    {
+        if (mode != DeletionMode.RecycleBin || item.ErrorCode is not { } code)
+            return item.ErrorMessage ?? string.Empty;
+        return code switch
+        {
+            DeletionIssueCode.InUse => T(
+                "Öğe başka bir uygulama tarafından kullanılıyor; Geri Dönüşüm Kutusu'na taşınmadı ve yerinde duruyor.",
+                "The item is in use by another app; it wasn't moved to the Recycle Bin and is still in place."),
+            DeletionIssueCode.OperationFailed => T(
+                "Windows bu öğeyi Geri Dönüşüm Kutusu'na taşıyamadı; öğe yerinde duruyor.",
+                "Windows couldn't move this item to the Recycle Bin; it's still in place.")
+                + HResultSuffix(item.ErrorMessage),
+            _ => LocalizeIssue(new DeletionIssue(item.Path, code, item.ErrorMessage ?? string.Empty))
+        };
+    }
+
+    private static string HResultSuffix(string? message)
+    {
+        var start = message?.IndexOf("(0x", StringComparison.Ordinal) ?? -1;
+        var end = start >= 0 ? message!.IndexOf(')', start) : -1;
+        return end > start ? " " + message![start..(end + 1)] : string.Empty;
     }
 
     private void SetBusy(bool busy, string? message = null, bool allowCancel = false)
@@ -636,6 +686,21 @@ public sealed class DeletionToolView : UserControl
         DeletionIssueCode.HardLinkCountUnavailable => T(
             "Dosyanın hard link sayısı okunamadı; başka bir yolu değiştirmemek için güvenli silme engellendi.",
             "The file's hard link count could not be read; secure erase was blocked to avoid changing another path."),
+        DeletionIssueCode.RecycleBinDisabled => T(
+            "Bu sürücüde Geri Dönüşüm Kutusu kapalı (Windows ayarı veya ilke); öğe Kutu'ya gitmeden kalıcı silinirdi. Kalıcı silmek istiyorsanız “Kalıcı silme” yöntemini bilerek seçin.",
+            "The Recycle Bin is turned off for this drive (Windows setting or policy), so the item would be deleted permanently. To delete it permanently, choose “Permanent delete” deliberately."),
+        DeletionIssueCode.ExceedsRecycleBinCapacity => T(
+            "Öğe bu sürücünün Geri Dönüşüm Kutusu kapasitesinden büyük; Windows onu Kutu'ya koymadan kalıcı silerdi. Kalıcı silmek istiyorsanız “Kalıcı silme” yöntemini bilerek seçin.",
+            "The item is larger than this drive's Recycle Bin capacity, so Windows would delete it permanently instead. To delete it permanently, choose “Permanent delete” deliberately."),
+        DeletionIssueCode.RecyclePathTooLong => T(
+            "Yol Geri Dönüşüm Kutusu için çok uzun (260 karakter sınırı); Windows öğeyi Kutu'ya koymadan silebilir. Yolu kısaltın ya da kalıcı silmek istiyorsanız “Kalıcı silme” yöntemini bilerek seçin.",
+            "The path is too long for the Recycle Bin (260-character limit), so Windows could delete the item without it. Shorten the path, or choose “Permanent delete” deliberately to delete it permanently."),
+        DeletionIssueCode.RecycleNotPossible => T(
+            "Bu öğe Geri Dönüşüm Kutusu'na taşınmadı ve kalıcı olarak silinmedi; yerinde duruyor. Kalıcı silmek istiyorsanız “Kalıcı silme” yöntemini bilerek seçin.",
+            "This item wasn't moved to the Recycle Bin and wasn't deleted permanently; it's still in place. To delete it permanently, choose “Permanent delete” deliberately."),
+        DeletionIssueCode.DeletedWithoutRecycleBin => T(
+            "Bu öğe ya da bir bölümü Geri Dönüşüm Kutusu'nda doğrulanamadan kaldırıldı; Windows kalıcı silmiş olabilir ve CopyPaste bunu geri alamaz.",
+            "This item, or part of it, was removed without a confirmed Recycle Bin copy; Windows may have deleted it permanently, and CopyPaste can't undo that."),
         _ => issue.Message
     };
 

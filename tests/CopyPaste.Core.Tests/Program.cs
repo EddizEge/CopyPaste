@@ -502,6 +502,156 @@ try
     if (File.Exists(readOnlyLockedFile))
         File.SetAttributes(readOnlyLockedFile, FileAttributes.Normal);
 
+    // Geri Dönüşüm Kutusu: sahte (salt okur) Kutu durumu, saf kabuk kararları ve servis sonuçları.
+    var recycleRoot = Path.Combine(deletionTestRoot, "geri-dönüşüm-kutusu");
+    Directory.CreateDirectory(recycleRoot);
+    var recycleFile = Path.Combine(recycleRoot, "kutu-dosyası.bin");
+    await File.WriteAllBytesAsync(recycleFile, new byte[4097]);
+    var recycleFolder = Path.Combine(recycleRoot, "kutu-klasörü");
+    Directory.CreateDirectory(recycleFolder);
+    await File.WriteAllBytesAsync(Path.Combine(recycleFolder, "bir.bin"), new byte[3000]);
+    await File.WriteAllBytesAsync(Path.Combine(recycleFolder, "iki.bin"), new byte[3000]);
+    const string fakeRecycleDirectory = @"C:\$Recycle.Bin\S-1-5-21-1-2-3-1001";
+    RecycleBinVolumeStatus HealthyRecycleBin() => new(false, false, 1L << 40, fakeRecycleDirectory);
+    DeletionPlanner RecyclePlanner(Func<string, RecycleBinVolumeStatus> status) =>
+        new(deletionProtected, deletionApp, new FakeRecycleBinStatusProvider(status));
+    DeletionIssueCode[] RecycleIssues(Func<string, RecycleBinVolumeStatus> status, params string[] paths) =>
+        RecyclePlanner(status).Create(paths, DeletionMode.RecycleBin).Issues.Select(issue => issue.Code).ToArray();
+    async Task<string> RecycleTestFile(string name, int length = 100)
+    {
+        var path = Path.Combine(recycleRoot, name);
+        await File.WriteAllBytesAsync(path, new byte[length]);
+        return path;
+    }
+
+    Assert(RecyclePlanner(_ => HealthyRecycleBin()).Create([recycleFile, recycleFolder], DeletionMode.RecycleBin).IsValid,
+        "Açık ve yeterli Geri Dönüşüm Kutusu ile plan geçerli olmalı");
+    Assert(RecycleIssues(_ => HealthyRecycleBin() with { NukeOnDelete = true }, recycleFile)
+               is [DeletionIssueCode.RecycleBinDisabled]
+           && RecycleIssues(_ => HealthyRecycleBin() with { DisabledByPolicy = true }, recycleFile)
+               is [DeletionIssueCode.RecycleBinDisabled],
+        "Kutu sürücüde (NukeOnDelete) ya da ilkeyle kapalıysa plan RecycleBinDisabled ile engellenmeli");
+    Assert(RecycleIssues(_ => HealthyRecycleBin() with { MaxCapacityBytes = 4096 }, recycleFile)
+               is [DeletionIssueCode.ExceedsRecycleBinCapacity]
+           && RecycleIssues(_ => HealthyRecycleBin() with { MaxCapacityBytes = 4097 }, recycleFile).Length == 0
+           && RecycleIssues(_ => HealthyRecycleBin() with { MaxCapacityBytes = 5000 }, recycleFolder)
+               is [DeletionIssueCode.ExceedsRecycleBinCapacity],
+        "Kökün toplam boyutu Kutu kapasitesini aşarsa plan engellenmeli; tam sığan kök engellenmemeli");
+    Assert(RecycleIssues(_ => HealthyRecycleBin() with { RecycleDirectory = @"C:\$Recycle.Bin\" + new string('S', 240) },
+               recycleFile) is [DeletionIssueCode.RecyclePathTooLong],
+        "Kutu'daki yolu 260 karakter sınırına ulaşacak kök plan aşamasında engellenmeli");
+    var longRecycleTop = Path.Combine(recycleRoot, "uzun-klasör-adı-" + new string('x', 24));
+    var longRecycleDirectory = longRecycleTop;
+    while (longRecycleDirectory.Length < DeletionPlanner.RecycleBinMaxPath + 10)
+        longRecycleDirectory = Path.Combine(longRecycleDirectory, "uzun-klasör-adı-" + new string('x', 24));
+    Directory.CreateDirectory(longRecycleDirectory);
+    await File.WriteAllTextAsync(Path.Combine(longRecycleDirectory, "dosya.txt"), "uzun yol");
+    Assert(RecycleIssues(_ => HealthyRecycleBin() with { RecycleDirectory = null }, longRecycleTop)
+               is [DeletionIssueCode.RecyclePathTooLong],
+        "Kaynak yolu 260 karakter sınırına ulaşan öğe Kutu modunda engellenmeli");
+    Assert(RecycleIssues(_ => new RecycleBinVolumeStatus(null, null, null, null), recycleFile, recycleFolder).Length == 0
+           && RecycleIssues(_ => throw new UnauthorizedAccessException("registry"), recycleFile).Length == 0,
+        "Kutu ayarı okunamazsa plan engellenmemeli (çalışma anı koruması devrede kalır)");
+    Assert(RecyclePlanner(_ => HealthyRecycleBin() with { NukeOnDelete = true })
+               .Create([recycleFile], DeletionMode.Permanent).IsValid,
+        "Geri Dönüşüm Kutusu ayarları kalıcı silme planını etkilememeli");
+
+    Assert(ShellRecycleBinSender.IsRecycleDeletionAllowed(0x282)
+           && ShellRecycleBinSender.IsRecycleDeletionAllowed(ShellRecycleBinSender.TransferSourceDeleteRecycleIfPossible)
+           && !ShellRecycleBinSender.IsRecycleDeletionAllowed(0x2)
+           && !ShellRecycleBinSender.IsRecycleDeletionAllowed(0x1002)
+           && !ShellRecycleBinSender.IsRecycleDeletionAllowed(0),
+        "PreDeleteItem yalnız TSF_DELETE_RECYCLE_IF_POSSIBLE bayrağı varsa silmeye izin vermeli");
+    RecycleBinSendStatus Classify(bool sourceExists, bool allowed = true, bool confirmed = false,
+        bool refused = false, bool canceled = false, bool permanent = false) =>
+        ShellRecycleBinSender.Classify(sourceExists, allowed, confirmed, refused, canceled, permanent);
+    Assert(Classify(sourceExists: false, confirmed: true) == RecycleBinSendStatus.Recycled
+           && Classify(sourceExists: false) == RecycleBinSendStatus.DeletedPermanently
+           && Classify(sourceExists: false, allowed: false) == RecycleBinSendStatus.Failed
+           && Classify(sourceExists: false, confirmed: true, permanent: true) == RecycleBinSendStatus.DeletedPermanently
+           && Classify(sourceExists: true, allowed: false, refused: true) == RecycleBinSendStatus.NotRecyclable
+           && Classify(sourceExists: true, refused: true, permanent: true) == RecycleBinSendStatus.DeletedPermanently
+           && Classify(sourceExists: true, allowed: false, canceled: true) == RecycleBinSendStatus.Canceled
+           && Classify(sourceExists: true) == RecycleBinSendStatus.Failed,
+        "Kutu sonucu yalnız Kutu'da doğrulanan öğede başarılı, Kutu'suz kaybolan öğede kalıcı silindi sayılmalı");
+
+    var mixedPlanner = RecyclePlanner(_ => HealthyRecycleBin());
+    var mixedPlan = mixedPlanner.Create([recycleFile, recycleFolder], DeletionMode.RecycleBin);
+    var mixedSender = new RecordingRecycleBinSender(path =>
+    {
+        if (string.Equals(path, recycleFile, StringComparison.OrdinalIgnoreCase))
+            return new(RecycleBinSendStatus.NotRecyclable, unchecked((int)0x80004004), 0x2, null, false);
+        Directory.Delete(path, recursive: true);
+        return new(RecycleBinSendStatus.Recycled, 0, 0x282, fakeRecycleDirectory + @"\$RABCDEF", false);
+    });
+    var mixedProgress = new List<DeletionProgress>();
+    var mixedResult = await new DeletionService(mixedPlanner, mixedSender).ExecuteAsync(
+        mixedPlan, new InlineProgress<DeletionProgress>(mixedProgress.Add));
+    Assert(mixedResult.Items is [{ Succeeded: false, ErrorCode: DeletionIssueCode.RecycleNotPossible },
+               { Succeeded: true }]
+           && !mixedResult.Succeeded && !mixedResult.WasCanceled
+           && File.Exists(recycleFile) && new FileInfo(recycleFile).Length == 4097
+           && !Directory.Exists(recycleFolder)
+           && mixedSender.Sent.Count == 2,
+        "Kutu'ya gönderilemeyen öğe silinmeden başarısız raporlanmalı ve kalan köklere devam edilmeli");
+    Assert(mixedProgress.Select(value => value.ProcessedBytes).SequenceEqual([4097L, 4097L + 6000])
+           && mixedProgress[^1].ProcessedBytes == mixedPlan.TotalBytes
+           && mixedProgress[^1].CompletedItems == 2,
+        "Kutu modunda ilerleme her kök bitince o kökün bayt toplamı kadar artmalı");
+
+    var stopFirst = await RecycleTestFile("doğrulanamayan-1.bin");
+    var stopSecond = await RecycleTestFile("doğrulanamayan-2.bin");
+    var stopPlanner = RecyclePlanner(_ => HealthyRecycleBin());
+    var stopSender = new RecordingRecycleBinSender(path =>
+    {
+        File.Delete(path);
+        return new(RecycleBinSendStatus.DeletedPermanently, 0, 0x282, null, false);
+    });
+    var stopResult = await new DeletionService(stopPlanner, stopSender).ExecuteAsync(
+        stopPlanner.Create([stopFirst, stopSecond], DeletionMode.RecycleBin));
+    Assert(stopResult.Items is [{ Succeeded: false, ErrorCode: DeletionIssueCode.DeletedWithoutRecycleBin },
+               { Succeeded: false, ErrorCode: DeletionIssueCode.RecycleNotPossible }]
+           && stopSender.Sent.Count == 1 && File.Exists(stopSecond),
+        "Kutu'da doğrulanamayan silmeden sonra kalan köklere dokunulmamalı ve durum açıkça bildirilmeli");
+
+    var canceledRecycleFile = await RecycleTestFile("iptal-kutu.bin");
+    var canceledRecyclePlanner = RecyclePlanner(_ => HealthyRecycleBin());
+    var canceledRecycleResult = await new DeletionService(canceledRecyclePlanner, new RecordingRecycleBinSender(_ =>
+            new(RecycleBinSendStatus.Canceled, unchecked((int)0x80270000), null, null, false)))
+        .ExecuteAsync(canceledRecyclePlanner.Create([canceledRecycleFile], DeletionMode.RecycleBin));
+    Assert(canceledRecycleResult is { WasCanceled: true, Items.Count: 0 } && File.Exists(canceledRecycleFile),
+        "Kutu gönderimi öğe değişmeden iptal edilirse sonuç iptal olmalı ve öğe yerinde kalmalı");
+
+    var toggledStatus = HealthyRecycleBin();
+    var toggleFile = await RecycleTestFile("önizlemeden-sonra-kapanan.bin");
+    var togglePlanner = RecyclePlanner(_ => toggledStatus);
+    var togglePlan = togglePlanner.Create([toggleFile], DeletionMode.RecycleBin);
+    toggledStatus = toggledStatus with { NukeOnDelete = true };
+    var toggleSender = new RecordingRecycleBinSender(_ =>
+        new(RecycleBinSendStatus.Recycled, 0, 0x282, fakeRecycleDirectory + @"\$RTOGGLE", false));
+    var toggleResult = await new DeletionService(togglePlanner, toggleSender).ExecuteAsync(togglePlan);
+    Assert(togglePlan.IsValid
+           && toggleResult.Items is [{ Succeeded: false, ErrorCode: DeletionIssueCode.RecycleBinDisabled }]
+           && toggleSender.Sent.Count == 0 && File.Exists(toggleFile),
+        "Önizlemeden sonra Kutu kapatılırsa Kutu gönderimi hiç başlamamalı");
+
+    var flipStatus = HealthyRecycleBin();
+    var flipFirst = await RecycleTestFile("kökler-arası-1.bin");
+    var flipSecond = await RecycleTestFile("kökler-arası-2.bin");
+    var flipPlanner = RecyclePlanner(_ => flipStatus);
+    var flipSender = new RecordingRecycleBinSender(path =>
+    {
+        File.Delete(path);
+        flipStatus = flipStatus with { MaxCapacityBytes = 10 };
+        return new(RecycleBinSendStatus.Recycled, 0, 0x282, fakeRecycleDirectory + @"\$RFLIP01.bin", false);
+    });
+    var flipResult = await new DeletionService(flipPlanner, flipSender).ExecuteAsync(
+        flipPlanner.Create([flipFirst, flipSecond], DeletionMode.RecycleBin));
+    Assert(flipResult.Items is [{ Succeeded: true },
+               { Succeeded: false, ErrorCode: DeletionIssueCode.ExceedsRecycleBinCapacity }]
+           && flipSender.Sent.Count == 1 && File.Exists(flipSecond),
+        "Kutu durumu her kökten hemen önce yeniden okunmalı");
+
     Assert(CopyJobValidator.Validate(tempSource, tempSource).IsValid == false, "Aynı yollar reddedilmeli");
     Assert(CopyJobValidator.Validate(tempSource, Path.Combine(tempSource, "child")).IsValid == false, "İç içe yollar reddedilmeli");
     Assert(CopyJobValidator.Validate(tempSource, tempDestination).IsValid, "Bağımsız yollar kabul edilmeli");
@@ -1309,6 +1459,93 @@ if (args.Contains("--stress", StringComparer.OrdinalIgnoreCase))
     }
 }
 
+// Gerçek Geri Dönüşüm Kutusu testi yalnız --recycle-bin ile çalışır. Kutu'ya yalnız bu testin oluşturduğu tek
+// küçük dosya gider ve $R/$I eşleşmesi doğrulanınca yalnız o öğe Kutu'dan temizlenir; Kutu boşaltılmaz.
+if (args.Contains("--recycle-bin", StringComparer.OrdinalIgnoreCase))
+{
+    var realRecycleRoot = Path.Combine(Path.GetTempPath(), "CopyPasteRecycleTests", Guid.NewGuid().ToString("N"));
+    try
+    {
+        Directory.CreateDirectory(realRecycleRoot);
+        var realStatus = WindowsRecycleBinStatusProvider.Instance.GetStatus(realRecycleRoot);
+        Console.WriteLine($"Kutu testi: durum ilke={realStatus.DisabledByPolicy?.ToString() ?? "?"}, "
+            + $"NukeOnDelete={realStatus.NukeOnDelete?.ToString() ?? "?"}, "
+            + $"MaxCapacity={realStatus.MaxCapacityBytes?.ToString() ?? "?"} B, klasör={realStatus.RecycleDirectory ?? "?"}");
+        var realPlanner = new DeletionPlanner();
+        var shellSender = new ShellRecycleBinSender();
+
+        var smallFile = Path.Combine(realRecycleRoot, $"copypaste-kutu-testi-{Guid.NewGuid():N}.txt");
+        var smallContent = "CopyPaste Geri Dönüşüm Kutusu testi " + Guid.NewGuid();
+        await File.WriteAllTextAsync(smallFile, smallContent);
+        var smallPlan = realPlanner.Create([smallFile], DeletionMode.RecycleBin);
+        Assert(smallPlan.IsValid, "Gerçek Kutu testi: küçük geçici dosyanın Kutu planı geçerli olmalı");
+        if (smallPlan.IsValid)
+        {
+            var recorder = new RecordingRecycleBinSender(path => shellSender.Send(path, CancellationToken.None));
+            var smallResult = await new DeletionService(realPlanner, recorder).ExecuteAsync(smallPlan);
+            var sent = recorder.Results.SingleOrDefault();
+            Console.WriteLine($"Kutu testi: küçük dosya sonuç={sent?.Status}, hr=0x{sent?.HResult:X8}, "
+                + $"PreDeleteItem bayrakları=0x{sent?.FirstPreDeleteFlags:X}, Kutu öğesi={sent?.RecycledItemPath ?? "<yok>"}");
+            Assert(smallResult.Succeeded && !File.Exists(smallFile)
+                   && sent is { Status: RecycleBinSendStatus.Recycled, RecycledItemPath: not null }
+                   && sent.FirstPreDeleteFlags is { } flags && ShellRecycleBinSender.IsRecycleDeletionAllowed(flags),
+                "Gerçek Kutu testi: küçük dosya Kutu'ya taşınmalı ve PreDeleteItem TSF_DELETE_RECYCLE_IF_POSSIBLE almalı");
+            if (sent?.RecycledItemPath is { } recycledPath)
+            {
+                var cleanup = RecycleBinTestCleanup.RemoveOwnItem(recycledPath, smallFile, smallContent,
+                    realStatus.RecycleDirectory);
+                Console.WriteLine("Kutu testi: temizlik " + cleanup);
+                Assert(cleanup.StartsWith("tamam", StringComparison.Ordinal),
+                    "Gerçek Kutu testi: testin Kutu öğesi ($R/$I) doğrulanıp temizlenmeli: " + cleanup);
+            }
+        }
+
+        // Kutu'dan büyük seyrek dosya: diskte yer kaplamaz, mantıksal boyutu birimden büyüktür.
+        var oversizedLength = new DriveInfo(Path.GetPathRoot(realRecycleRoot)!).TotalSize + (1L << 30);
+        var oversizedFile = Path.Combine(realRecycleRoot, "kutuya-sığmaz.bin");
+        NativeFileMethods.CreateSparseFile(oversizedFile, oversizedLength);
+        if (realStatus.MaxCapacityBytes is not null)
+            Assert(realPlanner.Create([oversizedFile], DeletionMode.RecycleBin).Issues
+                    is [{ Code: DeletionIssueCode.ExceedsRecycleBinCapacity }],
+                "Gerçek Kutu testi: kayıt defterindeki kapasiteyi aşan dosya önizlemede engellenmeli");
+        else
+            Console.WriteLine("Kutu testi: Kutu kapasitesi okunamadı; kapasite önizleme denetimi atlandı.");
+
+        var oversizedFolder = Path.Combine(realRecycleRoot, "kutuya-sığmayan-klasör");
+        Directory.CreateDirectory(oversizedFolder);
+        var oversizedFolderSmall = Path.Combine(oversizedFolder, "küçük.txt");
+        var oversizedFolderLarge = Path.Combine(oversizedFolder, "büyük.bin");
+        await File.WriteAllTextAsync(oversizedFolderSmall, "küçük");
+        NativeFileMethods.CreateSparseFile(oversizedFolderLarge, oversizedLength);
+        var folderSent = shellSender.Send(oversizedFolder, CancellationToken.None);
+        Console.WriteLine($"Kutu testi: sığmayan klasör (planlayıcı atlanarak) sonuç={folderSent.Status}, "
+            + $"hr=0x{folderSent.HResult:X8}, ilk bayrak=0x{folderSent.FirstPreDeleteFlags:X}");
+        Assert(folderSent is { Status: RecycleBinSendStatus.NotRecyclable, RecycledItemPath: null, SomeContentRecycled: false }
+               && File.Exists(oversizedFolderSmall) && File.Exists(oversizedFolderLarge),
+            "Gerçek Kutu testi: Kutu'ya sığmayan klasör PreDeleteItem korumasıyla silinmeden bırakılmalı");
+
+        // Bilinen kabuk sınırı: tek dosya sığmazsa PreDeleteItem yine 0x80 alır ve Windows dosyayı kalıcı siler.
+        // Bu yüzden planlayıcının kapasite denetimi şarttır; gönderici en azından başarı iddia etmemelidir.
+        var fileSent = shellSender.Send(oversizedFile, CancellationToken.None);
+        var oversizedFileExists = File.Exists(oversizedFile);
+        Console.WriteLine($"Kutu testi: sığmayan dosya (planlayıcı atlanarak) sonuç={fileSent.Status}, "
+            + $"hr=0x{fileSent.HResult:X8}, ilk bayrak=0x{fileSent.FirstPreDeleteFlags:X}, dosya duruyor={oversizedFileExists}");
+        Assert(fileSent.Status != RecycleBinSendStatus.Recycled
+               && (oversizedFileExists || fileSent.Status == RecycleBinSendStatus.DeletedPermanently),
+            "Gerçek Kutu testi: Kutu'ya girmeyen dosya hiçbir zaman Kutu'ya taşındı sayılmamalı");
+
+        var leftovers = RecycleBinTestCleanup.FindRecordsUnder(realStatus.RecycleDirectory, realRecycleRoot);
+        Console.WriteLine("Kutu testi: Kutu'da bu testin kökünü gösteren kayıt sayısı " + leftovers.Count
+            + (leftovers.Count > 0 ? " → " + string.Join(", ", leftovers) : string.Empty));
+        Assert(leftovers.Count == 0, "Gerçek Kutu testi: Kutu'da bu teste ait öğe kalmamalı");
+    }
+    finally
+    {
+        if (Directory.Exists(realRecycleRoot))
+            Directory.Delete(realRecycleRoot, recursive: true);
+    }
+}
+
 if (failures.Count > 0)
 {
     Console.Error.WriteLine(string.Join(Environment.NewLine, failures));
@@ -1363,6 +1600,88 @@ sealed class InlineProgress<T>(Action<T> handler) : IProgress<T>
     public void Report(T value) => handler(value);
 }
 
+sealed class FakeRecycleBinStatusProvider(Func<string, RecycleBinVolumeStatus> status) : IRecycleBinStatusProvider
+{
+    public RecycleBinVolumeStatus GetStatus(string path) => status(path);
+}
+
+sealed class RecordingRecycleBinSender(Func<string, RecycleBinSendResult> send) : IRecycleBinSender
+{
+    public List<string> Sent { get; } = [];
+    public List<RecycleBinSendResult> Results { get; } = [];
+
+    public RecycleBinSendResult Send(string path, CancellationToken cancellationToken)
+    {
+        Sent.Add(path);
+        var result = send(path);
+        Results.Add(result);
+        return result;
+    }
+}
+
+static class RecycleBinTestCleanup
+{
+    // Removes only the $R item and its $I record after the name, folder, content, and original path all match.
+    public static string RemoveOwnItem(string recycledPath, string originalPath, string expectedContent,
+        string? recycleDirectory)
+    {
+        var name = Path.GetFileName(recycledPath);
+        var directory = Path.GetDirectoryName(recycledPath) ?? string.Empty;
+        if (!name.StartsWith("$R", StringComparison.Ordinal)
+            || !directory.Contains(@"\$Recycle.Bin\", StringComparison.OrdinalIgnoreCase)
+            || (recycleDirectory is not null
+                && !string.Equals(directory, Path.TrimEndingDirectorySeparator(recycleDirectory),
+                    StringComparison.OrdinalIgnoreCase)))
+            return "yapılmadı: Kutu öğesi beklenen klasörde/adla değil: " + recycledPath;
+        if (!File.Exists(recycledPath) || File.ReadAllText(recycledPath) != expectedContent)
+            return "yapılmadı: $R içeriği eşleşmedi: " + recycledPath;
+        var record = Path.Combine(directory, "$I" + name[2..]);
+        if (!File.Exists(record) || !string.Equals(ReadOriginalPath(record), originalPath, StringComparison.OrdinalIgnoreCase))
+            return "yapılmadı: $I kaydı yok ya da özgün yol eşleşmedi: " + record;
+        File.Delete(recycledPath);
+        File.Delete(record);
+        return File.Exists(recycledPath) || File.Exists(record)
+            ? "yapılmadı: silme sonrası dosya duruyor: " + recycledPath
+            : $"tamam: {name} ve {Path.GetFileName(record)} kaldırıldı";
+    }
+
+    public static IReadOnlyList<string> FindRecordsUnder(string? recycleDirectory, string originalRoot)
+    {
+        if (recycleDirectory is null || !Directory.Exists(recycleDirectory))
+            return [];
+        var prefix = Path.TrimEndingDirectorySeparator(originalRoot) + Path.DirectorySeparatorChar;
+        return Directory.EnumerateFiles(recycleDirectory, "$I*")
+            .Where(record => ReadOriginalPath(record)?.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) == true)
+            .Select(Path.GetFileName)
+            .Select(name => name!)
+            .ToArray();
+    }
+
+    // $I layout: version (8), size (8), deletion time (8); v2 then has a length-prefixed UTF-16 path, v1 a fixed 260-char path.
+    private static string? ReadOriginalPath(string record)
+    {
+        try
+        {
+            var bytes = File.ReadAllBytes(record);
+            if (bytes.Length < 28)
+                return null;
+            var version = BitConverter.ToInt64(bytes, 0);
+            if (version == 2)
+            {
+                var length = BitConverter.ToInt32(bytes, 24);
+                return length > 0 && 28 + length * 2 <= bytes.Length
+                    ? Encoding.Unicode.GetString(bytes, 28, (length - 1) * 2)
+                    : null;
+            }
+            return version == 1 ? Encoding.Unicode.GetString(bytes, 24, bytes.Length - 24).TrimEnd('\0') : null;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return null;
+        }
+    }
+}
+
 static class NativeFileMethods
 {
     [DllImport("kernel32.dll", EntryPoint = "CreateHardLinkW", CharSet = CharSet.Unicode,
@@ -1402,6 +1721,15 @@ static class NativeFileMethods
         if (!success)
             Directory.Delete(junctionPath);
         return success;
+    }
+
+    // A sparse file reserves no clusters, so its logical size can exceed the volume without using disk space.
+    public static void CreateSparseFile(string path, long length)
+    {
+        using var stream = new FileStream(path, FileMode.CreateNew, FileAccess.ReadWrite);
+        if (!DeviceIoControl(stream.SafeFileHandle, 0x000900C4, [], 0, IntPtr.Zero, 0, out _, IntPtr.Zero))
+            throw new IOException("FSCTL_SET_SPARSE failed: " + Marshal.GetLastWin32Error());
+        stream.SetLength(length);
     }
 
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]

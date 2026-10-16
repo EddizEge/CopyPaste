@@ -28,7 +28,12 @@ public enum DeletionIssueCode
     EnumerationFailed,
     ChangedAfterPreview,
     OperationFailed,
-    HardLinkCountUnavailable
+    HardLinkCountUnavailable,
+    RecycleBinDisabled,
+    ExceedsRecycleBinCapacity,
+    RecyclePathTooLong,
+    RecycleNotPossible,
+    DeletedWithoutRecycleBin
 }
 
 public sealed record DeletionIssue(string Path, DeletionIssueCode Code, string Message);
@@ -78,6 +83,29 @@ public sealed record DeletionResult(
     public int FailedCount => Items.Count(item => !item.Succeeded);
     public bool Succeeded => !WasCanceled && FailedCount == 0;
 }
+
+// Null means the value could not be read; only known values may block a Recycle Bin plan.
+public sealed record RecycleBinVolumeStatus(
+    bool? DisabledByPolicy,
+    bool? NukeOnDelete,
+    long? MaxCapacityBytes,
+    string? RecycleDirectory);
+
+public enum RecycleBinSendStatus
+{
+    Recycled,
+    NotRecyclable,
+    Failed,
+    Canceled,
+    DeletedPermanently
+}
+
+public sealed record RecycleBinSendResult(
+    RecycleBinSendStatus Status,
+    int HResult,
+    uint? FirstPreDeleteFlags,
+    string? RecycledItemPath,
+    bool SomeContentRecycled);
 
 public sealed record ElevatedDeletionRequest(
     IReadOnlyList<string> Paths,

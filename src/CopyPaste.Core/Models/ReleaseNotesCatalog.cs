@@ -18,7 +18,8 @@ public static class ReleaseNotesCatalog
             "Kurulumsuz Windows x64 portable ZIP, 1.7.5 ve sonraki sürümlerde Setup ile aynı sürümü taşıyan ve SHA-256 listesine dahil edilen desteklenen bir yayın paketi oluyor.",
             "Portable çalışmada güncelleyici Setup yerine portable ZIP'i seçiyor, SHA-256 doğrulamasından sonra güvenli elle çıkarma için indirilen klasörü açıyor.",
             "Küçült/büyüt/kapat düğmeleri pencere arka plandayken de okunuyor; başlık menüsü dar pencerede bu düğmelerin altına girmiyor ve yüksek karşıtlık modunda sistem renkleri korunuyor.",
-            "iPhone, Android telefon veya başka bir taşınabilir aygıt kaynak ya da hedef seçildiğinde alan sessizce boşaltılmıyor; Robocopy'nin bu aygıtlara doğrudan erişemediği ve dosyaların önce Fotoğraflar uygulaması ya da Dosya Gezgini ile yerel bir klasöre aktarılması gerektiği açıklanıyor."
+            "iPhone, Android telefon veya başka bir taşınabilir aygıt kaynak ya da hedef seçildiğinde alan sessizce boşaltılmıyor; Robocopy'nin bu aygıtlara doğrudan erişemediği ve dosyaların önce Fotoğraflar uygulaması ya da Dosya Gezgini ile yerel bir klasöre aktarılması gerektiği açıklanıyor.",
+            "Geri Dönüşüm Kutusu modu, Kutu'ya sığmayan, Kutu'su kapalı sürücüde bulunan veya yolu çok uzun olan öğeleri artık sessizce kalıcı silmiyor: önizleme bunları engelleyip açıklıyor, Kutu'ya taşınamayan öğeler sonuçta başarısız gösteriliyor, Windows hata pencereleri açılmıyor ve ilerleme çubuğu bu modda da ilerliyor."
         ],
         [
             "A controlled deletion section integrated into the main application menu provides Recycle Bin, permanent deletion, and optional best-effort secure erasure modes for supported local NTFS files.",
@@ -27,7 +28,8 @@ public static class ReleaseNotesCatalog
             "The no-install Windows x64 portable ZIP becomes a supported release package in 1.7.5 and later, matching the Setup version and appearing in the SHA-256 list.",
             "When running portably, the updater selects the portable ZIP instead of Setup and opens the download folder for safe manual extraction after SHA-256 verification.",
             "The minimize, maximize, and close buttons stay legible while the window is in the background; the title menu no longer slides under them in narrow windows, and high-contrast mode keeps system colors.",
-            "Selecting an iPhone, Android phone, or other portable device as the source or destination no longer silently clears the field; the app explains that Robocopy can't access these devices directly and that files must first be transferred to a local folder with the Photos app or File Explorer."
+            "Selecting an iPhone, Android phone, or other portable device as the source or destination no longer silently clears the field; the app explains that Robocopy can't access these devices directly and that files must first be transferred to a local folder with the Photos app or File Explorer.",
+            "Recycle Bin mode no longer silently deletes items permanently when they don't fit in the Recycle Bin, are on a drive whose Recycle Bin is turned off, or have paths that are too long: the preview blocks and explains them, items that couldn't be moved to the Recycle Bin are shown as failed, no Windows error dialogs open, and the progress bar now advances in this mode too."
         ]),
         new("1.7.0", false,
         [
