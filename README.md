@@ -6,7 +6,7 @@ CopyPaste, [MIT License](LICENSE) ile açık kaynak olarak yayımlanır. Ayrınt
 [Code signing policy](CODE_SIGNING_POLICY.md) ve [gizlilik politikası](PRIVACY.md)
 belgelerine bakabilirsiniz.
 
-## CopyPaste 1.7.5 geliştirme önizlemesi
+## CopyPaste 1.7.5
 
 - Ana uygulama menüsüne entegre, normal transferlerden işlevsel olarak ayrılmış kontrollü dosya ve klasör silme bölümü
 - Varsayılan Geri Dönüşüm Kutusu, kalıcı silme ve desteklenen yerel NTFS dosyalarında
@@ -19,9 +19,13 @@ belgelerine bakabilirsiniz.
   paket smoke testi
 - Kurulu kullanımda Setup'ı, portable kullanımda SHA-256 doğrulamalı ZIP'i seçen
   dağıtım biçimine duyarlı güncelleme akışı
+- Geri Dönüşüm Kutusu modunda Kutu'ya taşınamayan öğeleri yerinde bırakan ve taşındığı
+  doğrulanamayan öğeyi açıkça bildiren koruma
+- Telefon veya taşınabilir aygıt seçildiğinde Türkçe/İngilizce açıklama
+- Başlık çubuğu düğmelerinde daha iyi okunurluk ve dar pencerede başlık menüsü
 
-Bu depo `1.7.5` geliştirme metadatasını taşır. Yayımlanmış kararlı sürüm `v1.7.0`'dır;
-`v1.7.5` için henüz yayın onayı, tag veya GitHub Release oluşturulmamıştır.
+Son kararlı sürüm `v1.7.5`'tir. `v1.7.5` Setup EXE ve portable ZIP paketleri
+Authenticode imzasızdır; ayrıntılar aşağıdadır.
 
 ## CopyPaste 1.6
 
@@ -150,9 +154,9 @@ Kurumsal sessiz kurulum örneği:
 .\CopyPaste-1.7.5-Setup.exe /LANG=turkish /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /TASKS="explorer"
 ```
 
-`v1.6.0` ve `v1.7.0` Setup EXE ve portable ZIP paketleri ürün sahibinin sürüm bazlı
-istisnasıyla Authenticode imzasız yayımlandı. İndirmeler `SHA256SUMS.txt` ile
-doğrulanmalıdır; imzasız MSIX yayımlanmaz. Bu istisna `v1.7.5` veya sonraki sürümlere
+`v1.6.0`, `v1.7.0` ve `v1.7.5` Setup EXE ve portable ZIP paketleri ürün sahibinin
+sürüm bazlı istisnalarıyla Authenticode imzasız yayımlandı. İndirmeler `SHA256SUMS.txt`
+ile doğrulanmalıdır; imzasız MSIX yayımlanmaz. Bu istisnalar sonraki sürümlere
 taşınmaz. SignPath Foundation başvurusu 24 Temmuz 2026'da proje henüz yeterli dış
 görünürlük sinyaline sahip olmadığı için reddedildi. Güvenilir MSIX dağıtımı için
 Microsoft Store hazırlığı 1.8 yol haritasındadır; doğrudan EXE/Setup imzalama ayrı kalır.
@@ -177,10 +181,10 @@ değerini ilk Release oluşturulmadan önce değiştirin.
 - `.github/workflows/pages.yml`, ana dal GitHub'a gönderildiğinde siteyi GitHub Pages'a yayınlar.
 - `.github/workflows/release.yml`, `v*` biçimindeki sürüm etiketi gönderildiğinde testleri çalıştırır,
   kurulum EXE'si ile taşınabilir paketi üretir ve SHA-256 özetleriyle GitHub Release'a ekler.
-- Geçici imzasız yayın istisnası yalnızca `v1.6.0` veya `v1.7.0` etiketi ile
-  `ALLOW_UNSIGNED_RELEASE=true` değişkeni birlikteyken çalışır; diğer sürümler
-  güvenilir imzalama olmadan durur.
-- Yeni bir sürüm yayımlamak için proje ve manifest sürümünü artırıp `v1.7.0` benzeri aynı sürüm
+- Geçici imzasız yayın istisnası yalnızca `v1.6.0`, `v1.7.0` veya `v1.7.5` etiketi ile
+  `ALLOW_UNSIGNED_RELEASE=true` değişkeni birlikteyken çalışır; sonraki sürümler dahil
+  diğer bütün sürümler güvenilir imzalama olmadan durur.
+- Yeni bir sürüm yayımlamak için proje ve manifest sürümünü artırıp `v1.7.5` benzeri aynı sürüm
   etiketi oluşturun. Uygulama kurulu dağıtımda `CopyPaste-*-Setup.exe`, portable dağıtımda
   `CopyPaste-*-win-x64.zip` paketini tercih eder; yalnızca tercih edilen paket yoksa diğerini
   indirme hedefi olarak kullanır.

@@ -10,26 +10,28 @@ public static class ReleaseNotesCatalog
 {
     public static IReadOnlyList<ReleaseNote> All { get; } =
     [
-        new("1.7.5", true,
+        new("1.7.5", false,
         [
             "Ana uygulama menüsüne entegre edilen kontrollü silme bölümü; Geri Dönüşüm Kutusu, kalıcı silme ve desteklenen yerel NTFS dosyalarında isteğe bağlı en iyi çaba güvenli silme modları sunuyor.",
             "Silme önizlemesi; çözümlenmiş hedefleri, öğe ve boyut toplamlarını, korunan yolları, reparse point sınırlarını ve depolama kısıtlarını işlemden önce doğruluyor.",
             "Kalıcı işlemler çift onay gerektiriyor; uygulama sahiplik veya ACL değiştirmiyor ve SSD/TRIM, NAS, bulut, yedek ya da snapshot bulunan ortamlarda kurtarılamazlık garantisi vermiyor.",
-            "Kurulumsuz Windows x64 portable ZIP, 1.7.5 ve sonraki sürümlerde Setup ile aynı sürümü taşıyan ve SHA-256 listesine dahil edilen desteklenen bir yayın paketi oluyor.",
+            "Kurulumsuz Windows x64 portable ZIP, 1.7.5 ve sonraki sürümlerde Setup ile aynı sürümü taşıyan ve SHA-256 listesine dahil edilen desteklenen bir yayın paketidir.",
             "Portable çalışmada güncelleyici Setup yerine portable ZIP'i seçiyor, SHA-256 doğrulamasından sonra güvenli elle çıkarma için indirilen klasörü açıyor.",
             "Küçült/büyüt/kapat düğmeleri pencere arka plandayken de okunuyor; başlık menüsü dar pencerede bu düğmelerin altına girmiyor ve yüksek karşıtlık modunda sistem renkleri korunuyor.",
             "iPhone, Android telefon veya başka bir taşınabilir aygıt kaynak ya da hedef seçildiğinde alan sessizce boşaltılmıyor; Robocopy'nin bu aygıtlara doğrudan erişemediği ve dosyaların önce Fotoğraflar uygulaması ya da Dosya Gezgini ile yerel bir klasöre aktarılması gerektiği açıklanıyor.",
-            "Geri Dönüşüm Kutusu modu, Kutu'ya sığmayan, Kutu'su kapalı sürücüde bulunan veya yolu çok uzun olan öğeleri artık sessizce kalıcı silmiyor: önizleme bunları engelleyip açıklıyor, Kutu'ya taşınamayan öğeler sonuçta başarısız gösteriliyor, Windows hata pencereleri açılmıyor ve ilerleme çubuğu bu modda da ilerliyor."
+            "Geri Dönüşüm Kutusu modu, Kutu'ya sığmayan, Kutu'su kapalı sürücüde bulunan veya yolu çok uzun olan öğeleri artık sessizce kalıcı silmiyor: önizleme bunları engelleyip açıklıyor, Kutu'ya taşınamayan öğeler sonuçta başarısız gösteriliyor, Windows hata pencereleri açılmıyor ve ilerleme çubuğu bu modda da ilerliyor.",
+            "1.7.5 Setup ve portable ZIP paketleri, güvenilir kod imzalama sertifikası henüz bulunmadığı için Authenticode imzasız yayımlanıyor; SHA-256 değerleri yayımlanır ve imzasız MSIX dağıtılmaz."
         ],
         [
             "A controlled deletion section integrated into the main application menu provides Recycle Bin, permanent deletion, and optional best-effort secure erasure modes for supported local NTFS files.",
             "The deletion preview validates resolved targets, item and byte totals, protected paths, reparse-point boundaries, and storage limitations before execution.",
             "Permanent operations require two confirmations; the app does not change ownership or ACLs and makes no unrecoverability guarantee for SSD/TRIM, NAS, cloud, backup, or snapshot-backed storage.",
-            "The no-install Windows x64 portable ZIP becomes a supported release package in 1.7.5 and later, matching the Setup version and appearing in the SHA-256 list.",
+            "The no-install Windows x64 portable ZIP is a supported release package in 1.7.5 and later, matching the Setup version and appearing in the SHA-256 list.",
             "When running portably, the updater selects the portable ZIP instead of Setup and opens the download folder for safe manual extraction after SHA-256 verification.",
             "The minimize, maximize, and close buttons stay legible while the window is in the background; the title menu no longer slides under them in narrow windows, and high-contrast mode keeps system colors.",
             "Selecting an iPhone, Android phone, or other portable device as the source or destination no longer silently clears the field; the app explains that Robocopy can't access these devices directly and that files must first be transferred to a local folder with the Photos app or File Explorer.",
-            "Recycle Bin mode no longer silently deletes items permanently when they don't fit in the Recycle Bin, are on a drive whose Recycle Bin is turned off, or have paths that are too long: the preview blocks and explains them, items that couldn't be moved to the Recycle Bin are shown as failed, no Windows error dialogs open, and the progress bar now advances in this mode too."
+            "Recycle Bin mode no longer silently deletes items permanently when they don't fit in the Recycle Bin, are on a drive whose Recycle Bin is turned off, or have paths that are too long: the preview blocks and explains them, items that couldn't be moved to the Recycle Bin are shown as failed, no Windows error dialogs open, and the progress bar now advances in this mode too.",
+            "The 1.7.5 Setup and portable ZIP are published without Authenticode signatures because no trusted code-signing certificate is available yet; SHA-256 hashes are published and no unsigned MSIX is distributed."
         ]),
         new("1.7.0", false,
         [

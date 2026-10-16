@@ -1,6 +1,6 @@
 # Değişiklik günlüğü
 
-## 1.7.5 — geliştirme aşamasında
+## 1.7.5
 
 - Ana uygulama menüsüne entegre, normal transferlerden ve zamanlamalardan işlevsel olarak tamamen ayrılmış kontrollü dosya/klasör silme bölümü eklendi.
 - Geri Dönüşüm Kutusu, kalıcı silme ve desteklenen yerel sabit NTFS dosyalarında üç geçişli best-effort güvenli silme modları eklendi.
@@ -8,11 +8,12 @@
 - Kalıcı modlara yerelleştirilmiş açık uyarı ve tam ifade gerektiren ikinci onay; UAC kısıtlı hedefler için ACL/sahiplik değiştirmeyen yönetici akışı eklendi.
 - Güvenli silmenin SSD/TRIM, NAS, bulut, yedek, snapshot, hard link, sıkıştırılmış ve sparse dosyalardaki sınırları açıkça gösteriliyor; disk geneli boş alan silme uygulanmıyor.
 - İptal ve öğe bazlı kısmi sonuçlar, kısmen üzerine yazılmış dosyalar için yanıltıcı olmayan durumlarla raporlanıyor.
-- Windows x64 portable ZIP gerçek self-contained yayın olarak üretilecek, sessiz açılış smoke testinden geçecek ve 1.7.5 sonrası her sürümde SHA-256 listesine zorunlu olarak eklenecek.
+- Windows x64 portable ZIP gerçek self-contained yayın olarak üretiliyor ve sessiz açılış smoke testinden geçiyor; 1.7.5 ve sonraki her sürümde ZIP ve SHA-256 girdisi zorunlu, eksikse yayın otomasyonu duruyor.
 - Portable çalışma işaretçisi ve paket seçimi eklendi; uygulama içi güncelleyici portable kullanımda Setup yerine SHA-256 doğrulamalı ZIP indirip güvenli elle çıkarma için klasörünü açıyor.
 - Başlık çubuğu düğmeleri koyu/mor palete göre renklendirildi: küçült/büyüt/kapat simgeleri pencere arka plandayken de okunuyor, üzerine gelme/basma durumları mor tonda; yüksek karşıtlık modunda sistem renkleri kullanılıyor. Ana pencerede uzun başlık düğmeleri kullanılıyor ve menü, dar pencerede sistem düğmelerinin altına girmek yerine kırpılıp yatay kayıyor. Silme aracının ayrı yönetici penceresinde de koyu başlık uygulanıyor. Korumalı klasör seçicinin başlığı Windows açık/koyu temasını izliyor.
 - iPhone, Android telefon veya başka bir taşınabilir aygıt kaynak ya da hedef olarak seçildiğinde (klasör seçici, sürükle-bırak veya elle yazılan aygıt/kabuk yolu) alan sessizce boşaltılmıyor; Robocopy'nin bu aygıtlara doğrudan erişemediği ve dosyaların önce Fotoğraflar uygulaması ya da Dosya Gezgini ile yerel bir klasöre aktarılması gerektiği Türkçe/İngilizce açıklanıyor. Göreli yollar için tam yol isteniyor; silme aracı da yolu olmayan aygıt öğelerini sessizce yok saymak yerine bildiriyor.
 - Geri Dönüşüm Kutusu modu artık Kutu'ya gönderilemeyen öğeleri sessizce kalıcı silmiyor. Önizleme; Kutu'su kapalı sürücüyü (Windows ayarı `NukeOnDelete` veya `NoRecycleFiles` ilkesi), Kutu kapasitesini aşan kökü ve 260 karakter sınırına ulaşan yolu kayıt defterini yalnız okuyarak engelliyor ve bilerek “Kalıcı silme” seçilebileceğini söylüyor; değer okunamazsa engellemiyor. Silme, Visual Basic `FileSystem` yerine kabuğun `IFileOperation` arabirimiyle her kök için ayrı ve pencere açmadan yapılıyor: Kutu'ya taşınmayacak alt öğeler reddediliyor, öğe Kutu'da doğrulanamadan kaybolursa sonuç bunu açıkça bildirip sonraki köklere dokunmuyor. Sonuç ekranı Kutu'ya taşınamayan öğeleri iki dilde başarısız gösteriyor; ilerleme çubuğu her kökte ilerliyor.
+- `v1.7.5` Setup ve portable ZIP paketleri, güvenilir kod imzalama sertifikası bulunmadığı için ürün sahibinin 16 Ekim 2026 tarihli sürüme özel onayıyla açık uyarı ve SHA-256 doğrulamasıyla Authenticode imzasız yayımlanıyor; imzasız MSIX yayımlanmıyor. Bu istisna sonraki sürümlere taşınmaz.
 
 ## 1.7.0
 

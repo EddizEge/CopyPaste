@@ -33,7 +33,7 @@ jobs:
         run: |
           if ([string]::IsNullOrWhiteSpace($env:WINDOWS_CERTIFICATE_BASE64)) {
             if ($env:ALLOW_UNSIGNED_RELEASE -eq "true" -and
-                $env:RELEASE_TAG -in @("v1.6.0", "v1.7.0")) {
+                $env:RELEASE_TAG -in @("v1.6.0", "v1.7.0", "v1.7.5")) {
               Write-Warning "Explicit version-specific exception: $($env:RELEASE_TAG) application files will remain unsigned."
               exit 0
             }
@@ -71,7 +71,7 @@ jobs:
         run: |
           if ([string]::IsNullOrWhiteSpace($env:WINDOWS_CERTIFICATE_BASE64)) {
             if ($env:ALLOW_UNSIGNED_RELEASE -eq "true" -and
-                $env:RELEASE_TAG -in @("v1.6.0", "v1.7.0")) {
+                $env:RELEASE_TAG -in @("v1.6.0", "v1.7.0", "v1.7.5")) {
               Write-Warning "Explicit version-specific exception: $($env:RELEASE_TAG) installer will remain unsigned."
               exit 0
             }
@@ -97,7 +97,7 @@ jobs:
         run: |
           if ([string]::IsNullOrWhiteSpace($env:WINDOWS_CERTIFICATE_BASE64)) {
             if ($env:ALLOW_UNSIGNED_RELEASE -eq "true" -and
-                $env:RELEASE_TAG -in @("v1.6.0", "v1.7.0")) {
+                $env:RELEASE_TAG -in @("v1.6.0", "v1.7.0", "v1.7.5")) {
               Write-Warning "Unsigned MSIX packages are not distributable; skipping MSIX for $($env:RELEASE_TAG)."
               exit 0
             }

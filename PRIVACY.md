@@ -11,8 +11,10 @@ Uygulama aşağıdaki durumlarda ağ bağlantısı kullanabilir:
 - Varsayılan olarak açık olan başlangıçta güncelleme kontrolü, en son sürüm bilgisini
   almak için GitHub API'ye standart bir HTTPS isteği gönderir. Bu seçenek Ayarlar'dan
   kapatılabilir.
-- Kullanıcı bir güncellemeyi indirmeyi seçtiğinde kurulum dosyası ve SHA-256 özeti
-  GitHub Releases üzerinden alınır.
+- Yeni bir sürüm bulunduğunda güncelleme paketi (kurulu kullanımda Setup, portable
+  kullanımda ZIP) varsayılan olarak arka planda GitHub Releases üzerinden indirilir ve
+  GitHub'ın yayın bilgisinde bildirdiği SHA-256 özetiyle doğrulanır. Otomatik indirme
+  Ayarlar'dan kapatılabilir; kapalıyken paket yalnızca kullanıcı indirmeyi seçtiğinde alınır.
 - Kullanıcının seçtiği ağ/NAS kaynakları ve hedefleri Windows ile Robocopy tarafından
   doğrudan kullanılır; bu veriler CopyPaste geliştiricisine aktarılmaz.
 - Kullanıcının açmayı seçtiği proje, sürüm veya destek bağlantıları varsayılan web
@@ -32,8 +34,11 @@ The application can use network connections in the following cases:
 
 - The startup update check, enabled by default, sends a standard HTTPS request to the
   GitHub API to retrieve the latest release information. It can be disabled in Settings.
-- When the user chooses to download an update, the installer and its SHA-256 checksum
-  are retrieved from GitHub Releases.
+- When a new release is found, the update package (Setup for installed use, the ZIP for
+  portable use) is downloaded in the background from GitHub Releases by default and
+  verified against the SHA-256 digest reported in GitHub's release information. Automatic
+  download can be turned off in Settings; when it is off, the package is retrieved only
+  when the user chooses to download it.
 - Network or NAS sources and destinations selected by the user are accessed directly
   by Windows and Robocopy; this data is not transferred to the CopyPaste developer.
 - Project, release, or support links opened by the user can open GitHub in the default

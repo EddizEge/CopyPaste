@@ -27,19 +27,19 @@ Object.assign(translations.en, {
   featureScheduleBody: "Create daily tasks and continue when a NAS or network connection returns.",
   featureDeletion: "Controlled deletion (1.7.5)",
   featureDeletionBody: "Preview targets in a dedicated main-menu section, then use the default Recycle Bin mode or explicitly confirmed permanent options.",
-  faqDeleteAnswer: "Normal transfers never delete files; MIR and PURGE remain disabled. The separate controlled deletion section arriving in 1.7.5 processes only targets you explicitly select and preview.",
+  faqDeleteAnswer: "Normal transfers never delete files; MIR and PURGE remain disabled. The separate controlled deletion section added to the main menu in 1.7.5 processes only targets you explicitly select and preview.",
   updateNote: "↻ GitHub Release updates are verified with SHA-256; installed builds select Setup and portable builds select ZIP."
 });
 
 Object.assign(translations.tr, {
   codeSigningPolicy: "Code signing policy / Kod imzalama politikası",
   privacyPolicy: "Gizlilik",
-  signingNote: "⚠ 1.6.0 ve 1.7.0 Setup/ZIP paketleri geçici olarak imzasızdır. SHA-256 ile doğrulayın; imzasız MSIX yayımlanmaz."
+  signingNote: "⚠ 1.6.0, 1.7.0 ve 1.7.5 Setup/ZIP paketleri geçici olarak imzasızdır. SHA-256 ile doğrulayın; imzasız MSIX yayımlanmaz."
 });
 Object.assign(translations.en, {
   codeSigningPolicy: "Code signing policy",
   privacyPolicy: "Privacy",
-  signingNote: "⚠ The 1.6.0 and 1.7.0 Setup/ZIP packages are temporarily unsigned. Verify SHA-256; no unsigned MSIX is published."
+  signingNote: "⚠ The 1.6.0, 1.7.0, and 1.7.5 Setup/ZIP packages are temporarily unsigned. Verify SHA-256; no unsigned MSIX is published."
 });
 translations.tr.trustOpen = "GitHub Releases";
 translations.en.trustOpen = "GitHub Releases";

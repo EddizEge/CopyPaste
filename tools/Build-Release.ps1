@@ -48,7 +48,8 @@ try {
     & $dotnet build (Join-Path $root "CopyPaste.sln") `
         -c $Configuration `
         -p:Platform=x64 `
-        -p:BaseOutputPath="$buildRoot\"
+        -p:BaseOutputPath="$buildRoot\" `
+        -p:ExplorerCommandOutputPath="$explorerOutput"
 
     if ($LASTEXITCODE -ne 0) {
         throw "CopyPaste Release derlemesi başarısız oldu."

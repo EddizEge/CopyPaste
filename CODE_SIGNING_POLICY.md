@@ -21,10 +21,11 @@ sahibi onayı gerektirir. Microsoft Store'a gönderilen MSIX'in Store tarafında
 - İmzalama yalnızca sürüm testleri başarıyla tamamlandıktan sonra istenir.
 - Her gelecekteki imzalama isteği signing approver tarafından elle onaylanır.
 - Başka projelere ait üçüncü taraf dosyalar CopyPaste sertifikasıyla imzalanmaz.
-- Ürün sahibinin 23 Temmuz 2026 tarihli sürüm bazlı onaylarıyla yalnızca `v1.6.0`
-  ve `v1.7.0` Setup ve portable ZIP dosyaları geçici olarak Authenticode imzasız yayımlanabilir.
+- Ürün sahibinin sürüm bazlı onaylarıyla (`v1.6.0` ve `v1.7.0` için 23 Temmuz 2026,
+  `v1.7.5` için 16 Ekim 2026) yalnızca `v1.6.0`, `v1.7.0` ve `v1.7.5` Setup ve portable ZIP
+  dosyaları geçici olarak Authenticode imzasız yayımlanabilir.
   Bu dosyalar açıkça imzasız olarak belirtilir, SHA-256 değerleri yayımlanır ve
-  imzasız MSIX dağıtılmaz.
+  imzasız MSIX dağıtılmaz. Bu istisnalar sonraki sürümleri kapsamaz.
 - İmzalı yayın dosyalarının SHA-256 değerleri GitHub Release içindeki
   `SHA256SUMS.txt` dosyasında yayımlanır.
 - İmza, Windows PowerShell'deki `Get-AuthenticodeSignature` veya Windows SDK
@@ -55,10 +56,12 @@ is planned separately from direct EXE/Setup Authenticode signing in the 1.8 road
 - Signing is requested only after the release tests have passed.
 - Every future signing request is manually approved by the signing approver.
 - Third-party files from other projects are not signed with the CopyPaste certificate.
-- With version-specific approvals from the product owner dated July 23, 2026, only
-  the `v1.6.0` and `v1.7.0` Setup and portable ZIP may be published temporarily without an
+- With version-specific approvals from the product owner (July 23, 2026 for `v1.6.0`
+  and `v1.7.0`, October 16, 2026 for `v1.7.5`), only the `v1.6.0`, `v1.7.0`, and `v1.7.5`
+  Setup and portable ZIP may be published temporarily without an
   Authenticode signature. They are clearly identified as unsigned, SHA-256 hashes
-  are published, and no unsigned MSIX is distributed.
+  are published, and no unsigned MSIX is distributed. These exceptions do not cover
+  any later release.
 - SHA-256 hashes for signed release assets are published in `SHA256SUMS.txt` within
   the GitHub Release.
 - Signatures can be verified with `Get-AuthenticodeSignature` in Windows PowerShell

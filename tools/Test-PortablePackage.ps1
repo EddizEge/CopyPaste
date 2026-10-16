@@ -30,7 +30,13 @@ try {
 
     $process = Start-Process -FilePath $executable `
         -ArgumentList @("--portable-smoke-test", "`"$resultFile`"") `
-        -PassThru -Wait -WindowStyle Hidden
+        -PassThru -WindowStyle Hidden
+    # Windows PowerShell 5.1 süreç tutamacı alınmazsa ExitCode boş döner.
+    $null = $process.Handle
+    if (-not $process.WaitForExit(180000)) {
+        try { $process.Kill() } catch { }
+        throw "Portable uygulama sessiz smoke testini 180 saniyede tamamlamadı; süreç kapatıldı."
+    }
     if ($process.ExitCode -ne 0 -or -not (Test-Path -LiteralPath $resultFile)) {
         throw "Portable uygulama sessiz smoke testini tamamlamadı."
     }
