@@ -78,6 +78,17 @@ public sealed partial class MainWindow : Window
     private StorageFolder? _pendingPhoneFolder;
     private string? _phoneWarningText;
 
+    // Portable package smoke test: only the window's XAML is loaded, so a package without the app's
+    // resource index fails the build instead of closing the app on start; no service is started.
+    internal static void VerifyPackagedXamlLoads() => _ = new MainWindow(xamlOnly: true);
+
+#pragma warning disable CS8618 // Services stay unset: this instance is never shown or used.
+    private MainWindow(bool xamlOnly)
+    {
+        InitializeComponent();
+    }
+#pragma warning restore CS8618
+
     public MainWindow(ShellLaunchRequest? shellRequest = null, AppNotificationService? notificationService = null)
     {
         _isPortable = PortableDistributionDetector.IsPortable(AppContext.BaseDirectory);

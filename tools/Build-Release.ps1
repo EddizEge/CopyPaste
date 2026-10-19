@@ -70,6 +70,19 @@ try {
         throw "CopyPaste self-contained portable yayını oluşturulamadı."
     }
 
+    # Paketlenmemiş WinUI yayını, uygulamanın kaynak dizinini (CopyPaste.App.pri) ve derlenmiş XAML'ı
+    # (*.xbf) yayın klasörüne koymuyor (SDK bunları yalnız MSIX araçlarıyla kopyalıyor). Bunlar olmadan
+    # ana pencere yüklenemez ve uygulama açılışta kapanır; aynı yayın derlemesinin çıktısından alınır.
+    $appBuildOutput = Join-Path $buildRoot "x64\$Configuration\net8.0-windows10.0.19041.0\$Runtime"
+    $appBuildOutputFull = [IO.Path]::GetFullPath($appBuildOutput).TrimEnd('\') + '\'
+    $xamlResources = @(Get-ChildItem -LiteralPath $appBuildOutput -Recurse -File |
+        Where-Object { $_.Name -eq "CopyPaste.App.pri" -or $_.Extension -eq ".xbf" })
+    foreach ($resource in $xamlResources) {
+        $target = Join-Path $publish $resource.FullName.Substring($appBuildOutputFull.Length)
+        New-Item -ItemType Directory -Path (Split-Path -Parent $target) -Force | Out-Null
+        Copy-Item -LiteralPath $resource.FullName -Destination $target -Force
+    }
+
     if (-not (Test-Path -LiteralPath $portableNotice)) {
         throw "Portable kullanım bildirimi bulunamadı: $portableNotice"
     }
@@ -79,7 +92,8 @@ try {
     Copy-Item -LiteralPath $portableNotice -Destination (Join-Path $publish "README.txt") -Force
     Copy-Item -LiteralPath $portableMarker -Destination (Join-Path $publish "CopyPaste.Portable") -Force
 
-    $requiredFiles = @("CopyPaste.App.exe", "CopyPaste.App.dll", "CopyPaste.Core.dll", "coreclr.dll", "hostfxr.dll", "README.txt", "CopyPaste.Portable")
+    $requiredFiles = @("CopyPaste.App.exe", "CopyPaste.App.dll", "CopyPaste.Core.dll", "coreclr.dll", "hostfxr.dll",
+        "CopyPaste.App.pri", "App.xbf", "MainWindow.xbf", "README.txt", "CopyPaste.Portable")
     foreach ($requiredFile in $requiredFiles) {
         if (-not (Test-Path -LiteralPath (Join-Path $publish $requiredFile))) {
             throw "Portable pakette zorunlu dosya eksik: $requiredFile"

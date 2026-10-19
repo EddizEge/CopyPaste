@@ -22,7 +22,8 @@ try {
     Expand-Archive -LiteralPath $archive -DestinationPath $testDirectoryFull
     $executable = Join-Path $testDirectoryFull "CopyPaste.App.exe"
     $resultFile = Join-Path $testDirectoryFull "portable-smoke-result.txt"
-    foreach ($requiredFile in @("CopyPaste.App.exe", "CopyPaste.App.dll", "CopyPaste.Core.dll", "coreclr.dll", "hostfxr.dll", "README.txt", "CopyPaste.Portable")) {
+    foreach ($requiredFile in @("CopyPaste.App.exe", "CopyPaste.App.dll", "CopyPaste.Core.dll", "coreclr.dll", "hostfxr.dll",
+            "CopyPaste.App.pri", "App.xbf", "MainWindow.xbf", "README.txt", "CopyPaste.Portable")) {
         if (-not (Test-Path -LiteralPath (Join-Path $testDirectoryFull $requiredFile) -PathType Leaf)) {
             throw "Portable arşivde zorunlu dosya eksik: $requiredFile"
         }

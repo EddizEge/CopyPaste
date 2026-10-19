@@ -43,6 +43,9 @@ public partial class App : Application
                     + Path.DirectorySeparatorChar;
                 if (!fullResultPath.StartsWith(tempRoot, StringComparison.OrdinalIgnoreCase))
                     throw new InvalidOperationException("Portable smoke-test output must stay in the temporary directory.");
+                // The package must also load the main window's XAML; a missing resource index fails here
+                // instead of closing the app on users' PCs (1.7.5).
+                MainWindow.VerifyPackagedXamlLoads();
                 var version = typeof(App).Assembly.GetName().Version?.ToString(3) ?? "unknown";
                 await File.WriteAllTextAsync(fullResultPath, version);
             }
