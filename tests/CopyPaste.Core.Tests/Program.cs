@@ -18,7 +18,8 @@ Assert(RobocopyRunner.CreateResult(16).Status == CopyJobStatus.Failed,
     "Exit 16 ciddi hata olarak başarısız olmalı");
 Assert(!new RobocopyResult(-1, CopyJobStatus.Cancelled, "iptal").IsSuccessful,
     "İptal sonucu başarılı sayılmamalı");
-Assert(ReleaseNotesCatalog.All is [{ Version: "1.7.5", IsPreview: false }, { Version: "1.7.0", IsPreview: false }, ..]
+Assert(ReleaseNotesCatalog.All is [{ Version: "1.7.6", IsPreview: true }, { Version: "1.7.5", IsPreview: false },
+           { Version: "1.7.0", IsPreview: false }, ..]
        && ReleaseNotesCatalog.All.Select(note => note.Version).Distinct(StringComparer.OrdinalIgnoreCase).Count()
           == ReleaseNotesCatalog.All.Count
        && ReleaseNotesCatalog.All.All(note => note.TurkishChanges.Count > 0
@@ -1419,6 +1420,396 @@ finally
         Directory.Delete(portableDetectionRoot, true);
 }
 
+// Telefondan aktar: sahte aygıtla motor kuralları, gerçek kabuk (COM) arka ucuyla yerel geçici klasör.
+var phoneTestRoot = Path.Combine(Path.GetTempPath(), "CopyPastePhoneTests", Guid.NewGuid().ToString("N"));
+try
+{
+    Directory.CreateDirectory(phoneTestRoot);
+    var phoneOptions = new PhoneImportOptions { ProgressInterval = TimeSpan.Zero };
+    var photoModified = new DateTimeOffset(2024, 5, 6, 7, 8, 9, TimeSpan.Zero);
+    var photoCreated = new DateTimeOffset(2024, 5, 1, 10, 0, 0, TimeSpan.Zero);
+    var heicBytes = RandomNumberGenerator.GetBytes(300_000);
+    var jpgBytes = RandomNumberGenerator.GetBytes(4_000);
+    var movBytes = RandomNumberGenerator.GetBytes(1_500_000);
+    FakeDeviceNode BuildIphone() => FakeDeviceNode.Folder("Apple iPhone",
+        FakeDeviceNode.Folder("Internal Storage",
+            FakeDeviceNode.Folder("DCIM",
+                FakeDeviceNode.Folder("100APPLE",
+                    FakeDeviceNode.File("IMG_0001.HEIC", heicBytes, photoModified, photoCreated),
+                    FakeDeviceNode.File("IMG_0002.JPG", jpgBytes)),
+                FakeDeviceNode.Folder("101APPLE",
+                    FakeDeviceNode.File("IMG_0101.MOV", movBytes)))));
+    string[] PhoneLeftovers(string root) => Directory.Exists(root)
+        ? Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories)
+            .Where(path => Path.GetFileName(path).Contains(PhoneImportEngine.TemporaryMarker, StringComparison.Ordinal))
+            .ToArray()
+        : [];
+    async Task<(FakePortableDeviceSource Source, PortableDeviceEntry Dcim)> OpenFakeAsync(FakeDeviceNode root)
+    {
+        var fake = new FakePortableDeviceSource("Fake", root);
+        var catalog = new PortableDeviceCatalog([fake]);
+        var discovery = await catalog.DiscoverAsync(CancellationToken.None);
+        var opened = await catalog.OpenAsync(discovery.Devices[0], discovery, CancellationToken.None);
+        return (fake, opened.Path[^1]);
+    }
+
+    // 1) Alt klasör yapısı, içerik, tarih, ilerleme.
+    var (fakeSource, fakeDcim) = await OpenFakeAsync(BuildIphone());
+    var phoneEngine = new PhoneImportEngine(phoneOptions);
+    var structureDestination = Path.Combine(phoneTestRoot, "hedef-yapı");
+    var structurePlan = await phoneEngine.PlanAsync(fakeSource, fakeDcim, "Apple iPhone › DCIM", structureDestination,
+        null, CancellationToken.None);
+    var phoneProgress = new List<PhoneImportProgress>();
+    var structureResult = await phoneEngine.ImportAsync(structurePlan,
+        new InlineProgress<PhoneImportProgress>(phoneProgress.Add), CancellationToken.None);
+    var importedHeic = Path.Combine(structureDestination, "100APPLE", "IMG_0001.HEIC");
+    Assert(fakeDcim.Name == "DCIM" && structurePlan.FileCount == 3 && structurePlan.ExistingCount == 0
+           && structurePlan.ReportedTotalBytes == heicBytes.Length + jpgBytes.Length + movBytes.Length
+           && structureResult is { Status: PhoneImportStatus.Completed, CopiedCount: 3, SkippedExistingCount: 0, FailedCount: 0, NotProcessedCount: 0 }
+           && File.ReadAllBytes(importedHeic).AsSpan().SequenceEqual(heicBytes)
+           && File.ReadAllBytes(Path.Combine(structureDestination, "100APPLE", "IMG_0002.JPG")).AsSpan().SequenceEqual(jpgBytes)
+           && File.ReadAllBytes(Path.Combine(structureDestination, "101APPLE", "IMG_0101.MOV")).AsSpan().SequenceEqual(movBytes)
+           && PhoneLeftovers(structureDestination).Length == 0,
+        "Telefondan aktar: DCIM alt klasör yapısı korunarak birebir kopyalanmalı ve geçici dosya kalmamalı");
+    Assert(File.GetLastWriteTimeUtc(importedHeic) == photoModified.UtcDateTime
+           && File.GetCreationTimeUtc(importedHeic) == photoCreated.UtcDateTime,
+        "Telefondan aktar: hedef dosyanın değiştirilme/oluşturma zamanı aygıtın bildirdiği tarih olmalı");
+    var lastPhoneProgress = phoneProgress.LastOrDefault();
+    Assert(lastPhoneProgress is { ProcessedFiles: 3, TotalFiles: 3, CopiedFiles: 3, SkippedFiles: 0, FailedFiles: 0 }
+           && lastPhoneProgress.ProcessedBytes == lastPhoneProgress.TotalBytes
+           && lastPhoneProgress.CopiedBytes == structurePlan.ReportedTotalBytes
+           && phoneProgress.Any(value => value.CurrentItem?.EndsWith("IMG_0101.MOV", StringComparison.Ordinal) == true
+                                         && value.CopiedBytes > 0)
+           && phoneProgress.Zip(phoneProgress.Skip(1)).All(pair => pair.Second.ProcessedBytes >= pair.First.ProcessedBytes),
+        "Telefondan aktar: ilerleme dosya n/N, bayt ve geçerli dosya adını tutarlı bildirmeli");
+
+    // 2) Var olan dosya atlanır, içeriği değişmez; yeniden çalıştırmak kaldığı yerden devam eder.
+    var skipDestination = Path.Combine(phoneTestRoot, "hedef-atla");
+    Directory.CreateDirectory(Path.Combine(skipDestination, "100APPLE"));
+    var existingPhonePath = Path.Combine(skipDestination, "100APPLE", "IMG_0002.JPG");
+    await File.WriteAllTextAsync(existingPhonePath, "ESKİ İÇERİK");
+    var skipPlan = await phoneEngine.PlanAsync(fakeSource, fakeDcim, "DCIM", skipDestination, null, CancellationToken.None);
+    var skipResult = await phoneEngine.ImportAsync(skipPlan, null, CancellationToken.None);
+    var rerunResult = await phoneEngine.ImportAsync(
+        await phoneEngine.PlanAsync(fakeSource, fakeDcim, "DCIM", structureDestination, null, CancellationToken.None),
+        null, CancellationToken.None);
+    Assert(skipPlan.ExistingCount == 1 && skipPlan.ReportedBytesToCopy == heicBytes.Length + movBytes.Length
+           && skipResult is { Status: PhoneImportStatus.Completed, CopiedCount: 2, SkippedExistingCount: 1 }
+           && await File.ReadAllTextAsync(existingPhonePath) == "ESKİ İÇERİK"
+           && rerunResult is { CopiedCount: 0, SkippedExistingCount: 3, FailedCount: 0 }
+           && File.ReadAllBytes(importedHeic).AsSpan().SequenceEqual(heicBytes),
+        "Telefondan aktar: hedefte aynı adlı dosya üzerine yazılmadan atlanmalı, yeniden çalıştırma yalnız eksikleri almalı");
+
+    // 3) Yarıda kesilen akış (0x8007001F) sonrası ne son ad ne geçici dosya kalır; sonraki dosyalar işlenir.
+    var brokenTree = BuildIphone();
+    brokenTree.Find("IMG_0001.HEIC")!.FailAfterBytes = 70_000;
+    brokenTree.Find("IMG_0001.HEIC")!.ReadError = new COMException(
+        "A device attached to the system is not functioning.", PhoneImportErrors.DeviceNotFunctioningHResult);
+    var (brokenSource, brokenDcim) = await OpenFakeAsync(brokenTree);
+    var brokenDestination = Path.Combine(phoneTestRoot, "hedef-kesik");
+    var brokenResult = await phoneEngine.ImportAsync(
+        await phoneEngine.PlanAsync(brokenSource, brokenDcim, "DCIM", brokenDestination, null, CancellationToken.None),
+        null, CancellationToken.None);
+    Assert(brokenResult is { Status: PhoneImportStatus.CompletedWithErrors, CopiedCount: 2, FailedCount: 1, NotProcessedCount: 0, SuggestKeepOriginals: true }
+           && brokenResult.Failures is [{ Kind: PhoneImportErrorKind.DeviceNotFunctioning }]
+           && brokenResult.Failures[0].RelativePath == Path.Combine("100APPLE", "IMG_0001.HEIC")
+           && !File.Exists(Path.Combine(brokenDestination, "100APPLE", "IMG_0001.HEIC"))
+           && File.Exists(Path.Combine(brokenDestination, "101APPLE", "IMG_0101.MOV"))
+           && PhoneLeftovers(brokenDestination).Length == 0,
+        "Telefondan aktar: yarıda kesilen dosya hedefte yarım ya da geçici bırakılmamalı, öğe hatasından sonra devam edilmeli");
+    Assert(PhoneImportErrors.KeepOriginalsHint(english: false).Contains("Orijinalleri Koru", StringComparison.Ordinal)
+           && PhoneImportErrors.KeepOriginalsHint(english: true).Contains("Keep Originals", StringComparison.Ordinal)
+           && PhoneImportErrors.Classify(new COMException("x", unchecked((int)0x8007001F))) == PhoneImportErrorKind.DeviceNotFunctioning
+           && !PhoneImportErrors.StopsImport(PhoneImportErrorKind.DeviceNotFunctioning),
+        "Telefondan aktar: 0x8007001F 'Orijinalleri Koru' ipucuyla eşlenmeli ve aktarmayı durdurmamalı");
+
+    // 4) İptal: geçerli dosya silinir, kalanlar işlenmedi sayılır.
+    var cancelTree = BuildIphone();
+    using var phoneCancellation = new CancellationTokenSource();
+    cancelTree.Find("IMG_0002.JPG")!.OnRead = _ => phoneCancellation.Cancel();
+    var (cancelSource, cancelDcim) = await OpenFakeAsync(cancelTree);
+    var cancelDestination = Path.Combine(phoneTestRoot, "hedef-iptal");
+    var cancelResult = await phoneEngine.ImportAsync(
+        await phoneEngine.PlanAsync(cancelSource, cancelDcim, "DCIM", cancelDestination, null, CancellationToken.None),
+        null, phoneCancellation.Token);
+    Assert(cancelResult is { Status: PhoneImportStatus.Cancelled, CopiedCount: 1, FailedCount: 0, NotProcessedCount: 2 }
+           && File.Exists(Path.Combine(cancelDestination, "100APPLE", "IMG_0001.HEIC"))
+           && !File.Exists(Path.Combine(cancelDestination, "100APPLE", "IMG_0002.JPG"))
+           && !File.Exists(Path.Combine(cancelDestination, "101APPLE", "IMG_0101.MOV"))
+           && PhoneLeftovers(cancelDestination).Length == 0,
+        "Telefondan aktar: iptalde yarım dosya ve geçici dosya kalmamalı, kalanlar işlenmedi sayılmalı");
+
+    // 5) Aygıt koptu: dur, kalanları işlenmedi say. Aygıt yanıt veriyorsa aynı kod yalnız o öğeyi düşürür.
+    var lostTree = BuildIphone();
+    var (lostSource, lostDcim) = await OpenFakeAsync(lostTree);
+    lostTree.Find("IMG_0002.JPG")!.OnOpen = () =>
+    {
+        lostSource.Disconnected = true;
+        throw new COMException("The device is not connected.", unchecked((int)0x8007048F));
+    };
+    var lostDestination = Path.Combine(phoneTestRoot, "hedef-koptu");
+    var lostResult = await phoneEngine.ImportAsync(
+        await phoneEngine.PlanAsync(lostSource, lostDcim, "DCIM", lostDestination, null, CancellationToken.None),
+        null, CancellationToken.None);
+    Assert(lostResult is { Status: PhoneImportStatus.StoppedDeviceDisconnected, CopiedCount: 1, FailedCount: 1, NotProcessedCount: 1 }
+           && lostResult.Failures is [{ Kind: PhoneImportErrorKind.DeviceDisconnected }]
+           && lostResult.Failures[0].HResult == unchecked((int)0x8007048F)
+           && !File.Exists(Path.Combine(lostDestination, "101APPLE", "IMG_0101.MOV"))
+           && PhoneLeftovers(lostDestination).Length == 0,
+        "Telefondan aktar: aygıt kopunca durmalı ve kalan dosyaları işlenmedi olarak bildirmeli");
+    var flakyTree = BuildIphone();
+    flakyTree.Find("IMG_0002.JPG")!.OnOpen = () => throw new COMException("Element not found.", unchecked((int)0x80070490));
+    var (flakySource, flakyDcim) = await OpenFakeAsync(flakyTree);
+    var flakyResult = await phoneEngine.ImportAsync(
+        await phoneEngine.PlanAsync(flakySource, flakyDcim, "DCIM", Path.Combine(phoneTestRoot, "hedef-tek-hata"), null,
+            CancellationToken.None),
+        null, CancellationToken.None);
+    Assert(flakyResult is { Status: PhoneImportStatus.CompletedWithErrors, CopiedCount: 2, FailedCount: 1, NotProcessedCount: 0 },
+        "Telefondan aktar: kopma koduna rağmen aygıt yanıt veriyorsa yalnız o öğe başarısız sayılıp devam edilmeli");
+
+    // 6) Yanıt vermeyen okuma zaman aşımıyla bırakılır, aktarma kilitlenmez.
+    var stallTree = BuildIphone();
+    stallTree.Find("IMG_0002.JPG")!.HangOnRead = true;
+    var (stallSource, stallDcim) = await OpenFakeAsync(stallTree);
+    var stallEngine = new PhoneImportEngine(new PhoneImportOptions
+    {
+        StallTimeout = TimeSpan.FromMilliseconds(300),
+        ProbeTimeout = TimeSpan.FromSeconds(2)
+    });
+    var stallDestination = Path.Combine(phoneTestRoot, "hedef-takılma");
+    var stallResult = await stallEngine.ImportAsync(
+        await stallEngine.PlanAsync(stallSource, stallDcim, "DCIM", stallDestination, null, CancellationToken.None),
+        null, CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(30));
+    Assert(stallResult is { Status: PhoneImportStatus.CompletedWithErrors, CopiedCount: 2, FailedCount: 1 }
+           && File.ReadAllBytes(Path.Combine(stallDestination, "101APPLE", "IMG_0101.MOV")).AsSpan().SequenceEqual(movBytes)
+           && PhoneLeftovers(stallDestination).Length == 0,
+        "Telefondan aktar: takılan okuma zaman aşımıyla bırakılmalı, sonraki dosya yeni tamponla doğru kopyalanmalı");
+
+    // 7) Geçersiz karakterler, ayrılmış adlar, büyük/küçük harf çakışması ve uzun ad.
+    var longPhoneName = new string('u', 300) + ".jpg";
+    var namesTree = FakeDeviceNode.Folder("Phone", FakeDeviceNode.Folder("Storage", FakeDeviceNode.Folder("DCIM",
+        FakeDeviceNode.File("a:b?.jpg", [1]),
+        FakeDeviceNode.File("CON.jpg", [2]),
+        FakeDeviceNode.File("nokta.", [3]),
+        FakeDeviceNode.File("IMG.JPG", [4]),
+        FakeDeviceNode.File("img.jpg", [5]),
+        FakeDeviceNode.File("a_b_.jpg", [6]),
+        FakeDeviceNode.File(longPhoneName, [7]))));
+    var (namesSource, namesDcim) = await OpenFakeAsync(namesTree);
+    var namesDestination = Path.Combine(phoneTestRoot, "hedef-adlar");
+    var namesPlan = await phoneEngine.PlanAsync(namesSource, namesDcim, "DCIM", namesDestination, null, CancellationToken.None);
+    var namesResult = await phoneEngine.ImportAsync(namesPlan, null, CancellationToken.None);
+    var importedNames = Directory.Exists(namesDestination)
+        ? Directory.EnumerateFiles(namesDestination).Select(path => Path.GetFileName(path)!)
+            .ToDictionary(name => name, name => File.ReadAllBytes(Path.Combine(namesDestination, name)).Single(),
+                StringComparer.Ordinal)
+        : new Dictionary<string, byte>();
+    var truncatedPhoneName = new string('u', 251) + ".jpg";
+    Assert(namesResult is { Status: PhoneImportStatus.Completed, CopiedCount: 7 }
+           && namesPlan.RenamedCount == 5
+           && importedNames.GetValueOrDefault("a_b_.jpg") == 6
+           && importedNames.GetValueOrDefault("a_b_ (2).jpg") == 1
+           && importedNames.GetValueOrDefault("_CON.jpg") == 2
+           && importedNames.GetValueOrDefault("nokta") == 3
+           && importedNames.GetValueOrDefault("IMG.JPG") == 4
+           && importedNames.GetValueOrDefault("img (2).jpg") == 5
+           && importedNames.GetValueOrDefault(truncatedPhoneName) == 7,
+        "Telefondan aktar: NTFS'te geçersiz, ayrılmış, çakışan ve uzun adlar kayıpsız ve kararlı biçimde güvenli adlara çevrilmeli ("
+        + string.Join(", ", importedNames.Keys.Select(name => name.Length > 40 ? name[..12] + "…(" + name.Length + ")" : name)) + ")");
+    Assert(PhoneImportPathSanitizer.SanitizeName("a<b>c|d\"e*f") == "a_b_c_d_e_f"
+           && PhoneImportPathSanitizer.SanitizeName("..") == "_"
+           && PhoneImportPathSanitizer.SanitizeName("lpt1 .txt") == "_lpt1 .txt"
+           && PhoneImportPathSanitizer.SanitizeName("Çiçek ğüşı.heic") == "Çiçek ğüşı.heic",
+        "Telefondan aktar: ad temizleyici geçersiz karakterleri, nokta adlarını ve ayrılmış aygıt adlarını ele almalı");
+
+    // 8) Doğrulama: geçici dosya okunan veriyle eşleşmezse silinir; son ad bu arada oluşursa dokunulmaz.
+    var verifyEngine = new PhoneImportEngine(new PhoneImportOptions
+    {
+        AfterTemporaryFileWritten = (temporary, final) =>
+        {
+            if (final.EndsWith("IMG_0001.HEIC", StringComparison.Ordinal))
+                File.WriteAllBytes(temporary, [9, 9, 9]);
+            else if (final.EndsWith("IMG_0002.JPG", StringComparison.Ordinal))
+                File.WriteAllText(final, "YARIŞ");
+        }
+    });
+    var verifyDestination = Path.Combine(phoneTestRoot, "hedef-doğrulama");
+    var verifyResult = await verifyEngine.ImportAsync(
+        await verifyEngine.PlanAsync(fakeSource, fakeDcim, "DCIM", verifyDestination, null, CancellationToken.None),
+        null, CancellationToken.None);
+    Assert(verifyResult is { CopiedCount: 1, SkippedExistingCount: 1, FailedCount: 1 }
+           && verifyResult.Failures is [{ Kind: PhoneImportErrorKind.VerificationFailed }]
+           && !File.Exists(Path.Combine(verifyDestination, "100APPLE", "IMG_0001.HEIC"))
+           && File.ReadAllText(Path.Combine(verifyDestination, "100APPLE", "IMG_0002.JPG")) == "YARIŞ"
+           && PhoneLeftovers(verifyDestination).Length == 0,
+        "Telefondan aktar: SHA-256 eşleşmezse dosya silinmeli, aradaki sürede oluşan hedef dosyanın üzerine yazılmamalı");
+
+    // 9) Bildirilen boyut ≠ okunan bayt (iPhone dönüştürmesi): başarısızlık değil, not.
+    var convertedTree = BuildIphone();
+    convertedTree.Find("IMG_0002.JPG")!.ReportedSize = 10;
+    var (convertedSource, convertedDcim) = await OpenFakeAsync(convertedTree);
+    var convertedResult = await phoneEngine.ImportAsync(
+        await phoneEngine.PlanAsync(convertedSource, convertedDcim, "DCIM", Path.Combine(phoneTestRoot, "hedef-boyut"), null,
+            CancellationToken.None),
+        null, CancellationToken.None);
+    Assert(convertedResult is { Status: PhoneImportStatus.Completed, CopiedCount: 3, SizeMismatchCount: 1 }
+           && convertedResult.SizeMismatches.SequenceEqual([Path.Combine("100APPLE", "IMG_0002.JPG")]),
+        "Telefondan aktar: bildirilen boyuttan farklı bayt sayısı başarısızlık sayılmamalı, sonuçta not edilmeli");
+
+    // 10) Hata sınıflandırması ve hedef doğrulaması.
+    Assert(new[] { 0x8007048F, 0x80070015, 0x80070079, 0x800701B1, 0x80070490 }
+               .All(code => PhoneImportErrors.ClassifyHResult(unchecked((int)code)) == PhoneImportErrorKind.DeviceDisconnected)
+           && PhoneImportErrors.Classify(new IOException("dolu", unchecked((int)0x80070070))) == PhoneImportErrorKind.DestinationFull
+           && PhoneImportErrors.StopsImport(PhoneImportErrorKind.DestinationFull)
+           && PhoneImportErrors.StopsImport(PhoneImportErrorKind.DeviceDisconnected)
+           && PhoneImportErrors.Classify(new UnauthorizedAccessException()) == PhoneImportErrorKind.AccessDenied
+           && PhoneImportErrors.Classify(new PhoneImportStallException("x")) == PhoneImportErrorKind.DeviceDisconnected,
+        "Telefondan aktar: aygıt kopması, hedef dolu ve erişim hataları doğru sınıflandırılmalı");
+    AssertThrows<ArgumentException>(() => PhoneImportEngine.NormalizeDestination(@"This PC\Apple iPhone\Internal Storage"),
+        "Telefondan aktar: telefon yolu hedef olarak reddedilmeli");
+    AssertThrows<ArgumentException>(() => PhoneImportEngine.NormalizeDestination(@"Foto\Tatil"),
+        "Telefondan aktar: göreli hedef yolu reddedilmeli");
+    Assert(structurePlan.FreeBytes is > 0 && structurePlan.HasEnoughSpace
+           && !(structurePlan with { FreeBytes = 1 }).HasEnoughSpace,
+        "Telefondan aktar: özet hedefteki boş alanı göstermeli ve yetmeyen alanı ayırt etmeli");
+
+    // 11) Arka uç seçimi ve yedek yol.
+    var failingPrimary = new FakePortableDeviceSource("WinRT", BuildIphone())
+    {
+        DevicesError = new COMException("broken", unchecked((int)0x80070005))
+    };
+    var workingFallback = new FakePortableDeviceSource("Shell", BuildIphone());
+    var failingDiscovery = await new PortableDeviceCatalog([failingPrimary, workingFallback])
+        .DiscoverAsync(CancellationToken.None);
+    Assert(failingDiscovery.Devices is [{ BackendName: "Shell" }]
+           && failingDiscovery.Reports.Count == 2
+           && failingDiscovery.Reports[0] is { BackendName: "WinRT", ErrorHResult: unchecked((int)0x80070005) }
+           && failingDiscovery.Reports[1] is { BackendName: "Shell", ErrorHResult: null, Devices.Count: 1 },
+        "Telefondan aktar: birincil arka uç hata verirse aygıt listesi yedek arka uçtan gelmeli");
+    var lockedPrimary = new FakePortableDeviceSource("WinRT", FakeDeviceNode.Folder("Apple iPhone",
+        FakeDeviceNode.Folder("Internal Storage")));
+    var catalogWithFallback = new PortableDeviceCatalog([lockedPrimary, workingFallback]);
+    var lockedDiscovery = await catalogWithFallback.DiscoverAsync(CancellationToken.None);
+    var fallbackOpen = await catalogWithFallback.OpenAsync(lockedDiscovery.Devices[0], lockedDiscovery,
+        CancellationToken.None);
+    Assert(lockedDiscovery.Devices is [{ BackendName: "WinRT" }]
+           && fallbackOpen is { Outcome: PortableDeviceOpenOutcome.DcimFound, Device.BackendName: "Shell" }
+           && fallbackOpen.Path.Select(entry => entry.Name).SequenceEqual(["Apple iPhone", "Internal Storage", "DCIM"])
+           && fallbackOpen.Attempts.Count == 2,
+        "Telefondan aktar: birincil yol DCIM'i göremezse aynı aygıt yedek yoldan açılmalı");
+    var lockedOnly = new PortableDeviceCatalog([lockedPrimary]);
+    var lockedOnlyDiscovery = await lockedOnly.DiscoverAsync(CancellationToken.None);
+    var lockedOpen = await lockedOnly.OpenAsync(lockedOnlyDiscovery.Devices[0], lockedOnlyDiscovery, CancellationToken.None);
+    var unopenedPrimary = lockedDiscovery.Devices[0] with { Root = null, ErrorHResult = unchecked((int)0x80070005) };
+    var unopenedOpen = await catalogWithFallback.OpenAsync(unopenedPrimary, lockedDiscovery, CancellationToken.None);
+    Assert(lockedOpen.Outcome == PortableDeviceOpenOutcome.StorageEmpty
+           && unopenedOpen is { Outcome: PortableDeviceOpenOutcome.DcimFound, Device.BackendName: "Shell" },
+        "Telefondan aktar: boş depolama kilit/güven durumu olarak ayırt edilmeli, açılamayan aygıt yedek yoldan denenmeli");
+
+    // 12) Tanılama metni.
+    var phoneDiagnostics = new PhoneImportDiagnostics
+    {
+        AppVersion = "1.7.6.0",
+        Discovery = failingDiscovery,
+        LastOpen = fallbackOpen,
+        LastPlan = structurePlan,
+        LastResult = brokenResult,
+        MediaImportLines = ["IsSupportedAsync = True", "FindAllSourcesAsync: 0"]
+    };
+    phoneDiagnostics.RecordError("WinRT aygıt listesi", unchecked((int)0x80070005), "Access is denied.");
+    var turkishDiagnostics = phoneDiagnostics.Build(english: false);
+    var englishDiagnostics = phoneDiagnostics.Build(english: true);
+    Assert(turkishDiagnostics.Contains("Telefondan aktar tanılaması", StringComparison.Ordinal)
+           && turkishDiagnostics.Contains("[WinRT] HATA 0x80070005", StringComparison.Ordinal)
+           && turkishDiagnostics.Contains("[Shell] 1 aygıt", StringComparison.Ordinal)
+           && turkishDiagnostics.Contains("0x8007001F DeviceNotFunctioning", StringComparison.Ordinal)
+           && turkishDiagnostics.Contains("DCIM bulundu", StringComparison.Ordinal)
+           && englishDiagnostics.Contains("Import from phone diagnostics", StringComparison.Ordinal)
+           && englishDiagnostics.Contains("DCIM found", StringComparison.Ordinal),
+        "Telefondan aktar: tanılama metni arka uçları, aygıtları, DCIM durumunu ve HRESULT'ları iki dilde içermeli");
+
+    // 13) Gerçek kabuk (COM) arka ucu yerel geçici klasörde: ad (uzantı gizlemeden bağımsız), boyut, tarih, okuma, iç içe klasör.
+    var shellSourceRoot = Path.Combine(phoneTestRoot, "kabuk-kaynak");
+    var shellNested = Path.Combine(shellSourceRoot, "alt", "iç içe");
+    Directory.CreateDirectory(shellNested);
+    var shellPhoto = RandomNumberGenerator.GetBytes(150_000);
+    var shellVideo = RandomNumberGenerator.GetBytes(2_600_000);
+    var shellUnicode = RandomNumberGenerator.GetBytes(1_234);
+    var shellPhotoPath = Path.Combine(shellSourceRoot, "foto.jpg");
+    await File.WriteAllBytesAsync(shellPhotoPath, shellPhoto);
+    await File.WriteAllBytesAsync(Path.Combine(shellNested, "video.mov"), shellVideo);
+    await File.WriteAllBytesAsync(Path.Combine(shellSourceRoot, "Çiçek ğüşı.heic"), shellUnicode);
+    var shellPhotoTime = new DateTime(2023, 3, 4, 5, 6, 7, DateTimeKind.Utc);
+    File.SetLastWriteTimeUtc(shellPhotoPath, shellPhotoTime);
+    var shellZipFolder = Path.Combine(phoneTestRoot, "zip-içerik");
+    Directory.CreateDirectory(shellZipFolder);
+    await File.WriteAllTextAsync(Path.Combine(shellZipFolder, "not.txt"), "zip");
+    System.IO.Compression.ZipFile.CreateFromDirectory(shellZipFolder, Path.Combine(shellSourceRoot, "arşiv.zip"));
+    var hideExtensions = Microsoft.Win32.Registry.GetValue(
+        @"HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced", "HideFileExt", null);
+    using (var shellSource = new ShellPortableDeviceSource())
+    {
+        var shellDevices = await shellSource.GetDevicesAsync(CancellationToken.None);
+        Console.WriteLine($"Telefon testi: kabuk 'Bu bilgisayar' altında {shellDevices.Count} taşınabilir aygıt gördü; "
+            + $"Explorer HideFileExt={hideExtensions ?? "(yok)"}.");
+        var shellFolder = await shellSource.GetFolderAsync(shellSourceRoot, CancellationToken.None);
+        var shellChildren = await shellSource.GetChildrenAsync(shellFolder, CancellationToken.None);
+        var shellByName = shellChildren.ToDictionary(child => child.Name, StringComparer.Ordinal);
+        Assert(shellByName.Count == 4
+               && shellByName.TryGetValue("foto.jpg", out var shellPhotoEntry)
+               && shellPhotoEntry is { IsFolder: false, ReportedSize: 150_000 }
+               && shellPhotoEntry.Modified?.UtcDateTime == shellPhotoTime
+               && shellByName.TryGetValue("Çiçek ğüşı.heic", out var shellUnicodeEntry)
+               && shellUnicodeEntry.ReportedSize == shellUnicode.Length
+               && shellByName.TryGetValue("alt", out var shellAltEntry) && shellAltEntry.IsFolder
+               && shellByName.TryGetValue("arşiv.zip", out var shellZipEntry) && !shellZipEntry.IsFolder,
+            "Gerçek kabuk arka ucu: adlar uzantılarıyla, boyut ve tarih doğru okunmalı; zip dosya sayılmalı (bulunan: "
+            + string.Join(", ", shellChildren.Select(child =>
+                $"{child.Name}|{(child.IsFolder ? "klasör" : child.ReportedSize)}|{child.Modified:O}")) + ")");
+        if (shellByName.TryGetValue("foto.jpg", out var readEntry))
+        {
+            await using var shellStream = await shellSource.OpenReadAsync(readEntry, CancellationToken.None);
+            using var shellCopy = new MemoryStream();
+            await shellStream.CopyToAsync(shellCopy);
+            Assert(shellCopy.ToArray().AsSpan().SequenceEqual(shellPhoto),
+                "Gerçek kabuk arka ucu: IStream ile okunan baytlar dosyanın kendisiyle aynı olmalı");
+        }
+        var shellDestination = Path.Combine(phoneTestRoot, "kabuk-hedef");
+        var shellEngine = new PhoneImportEngine(new PhoneImportOptions { BufferSize = 256 * 1024 });
+        var shellPlan = await shellEngine.PlanAsync(shellSource, shellFolder, shellSourceRoot, shellDestination, null,
+            CancellationToken.None);
+        var shellResult = await shellEngine.ImportAsync(shellPlan, null, CancellationToken.None);
+        Assert(shellPlan.FileCount == 4
+               && shellResult is { Status: PhoneImportStatus.Completed, CopiedCount: 4, BackendName: ShellPortableDeviceSource.Name }
+               && File.ReadAllBytes(Path.Combine(shellDestination, "alt", "iç içe", "video.mov")).AsSpan().SequenceEqual(shellVideo)
+               && File.ReadAllBytes(Path.Combine(shellDestination, "Çiçek ğüşı.heic")).AsSpan().SequenceEqual(shellUnicode)
+               && File.GetLastWriteTimeUtc(Path.Combine(shellDestination, "foto.jpg")) == shellPhotoTime
+               && File.Exists(Path.Combine(shellDestination, "arşiv.zip"))
+               && PhoneLeftovers(shellDestination).Length == 0,
+            "Gerçek kabuk arka ucu: iç içe klasörler, Unicode adlar ve tarihlerle uçtan uca içe aktarma doğru olmalı");
+        Console.WriteLine($"Telefon testi: kabuk arka ucuyla {shellResult.CopiedCount} dosya, "
+            + $"{PhoneImportDiagnostics.FormatBytes(shellResult.CopiedBytes)} aktarıldı ({shellResult.Elapsed.TotalMilliseconds:N0} ms).");
+
+        // .url kısayollarının uzantısı (NeverShowExt) kullanıcı ayarından bağımsız olarak görünen adda hep gizlenir.
+        var shellNamesRoot = Path.Combine(phoneTestRoot, "kabuk-adlar");
+        Directory.CreateDirectory(shellNamesRoot);
+        var shortcutPath = Path.Combine(shellNamesRoot, "kısayol.url");
+        await File.WriteAllTextAsync(shortcutPath, "[InternetShortcut]\r\nURL=https://example.com/\r\n");
+        var shortcutDisplayName = (await shellSource.GetFolderAsync(shortcutPath, CancellationToken.None)).Name;
+        var shellNameChildren = await shellSource.GetChildrenAsync(
+            await shellSource.GetFolderAsync(shellNamesRoot, CancellationToken.None), CancellationToken.None);
+        Console.WriteLine($"Telefon testi: '.url' görünen ad (SIGDN_NORMALDISPLAY) '{shortcutDisplayName}', "
+            + $"arka ucun dosya adı '{string.Join(", ", shellNameChildren.Select(child => child.Name))}'.");
+        Assert(shellNameChildren is [{ Name: "kısayol.url", IsFolder: false }],
+            "Gerçek kabuk arka ucu: uzantısı her zaman gizlenen dosyada bile ad uzantısıyla (PKEY_FileName) okunmalı");
+    }
+}
+finally
+{
+    if (Directory.Exists(phoneTestRoot))
+        Directory.Delete(phoneTestRoot, recursive: true);
+}
+
 if (args.Contains("--stress", StringComparer.OrdinalIgnoreCase))
 {
     var stressRoot = Path.Combine(Path.GetTempPath(), "CopyPasteStress", Guid.NewGuid().ToString("N"));
@@ -1598,6 +1989,133 @@ sealed class ByteStubHttpMessageHandler(byte[] content) : HttpMessageHandler
 sealed class InlineProgress<T>(Action<T> handler) : IProgress<T>
 {
     public void Report(T value) => handler(value);
+}
+
+sealed class FakeDeviceNode
+{
+    private FakeDeviceNode(string name, bool isFolder)
+    {
+        Name = name;
+        IsFolder = isFolder;
+    }
+
+    public string Name { get; }
+    public bool IsFolder { get; }
+    public byte[] Content { get; private init; } = [];
+    public long? ReportedSize { get; set; }
+    public DateTimeOffset? Modified { get; private init; }
+    public DateTimeOffset? Created { get; private init; }
+    public List<FakeDeviceNode> Children { get; } = [];
+    public long? FailAfterBytes { get; set; }
+    public Exception? ReadError { get; set; }
+    public Action<long>? OnRead { get; set; }
+    public Action? OnOpen { get; set; }
+    public bool HangOnRead { get; set; }
+
+    public static FakeDeviceNode Folder(string name, params FakeDeviceNode[] children)
+    {
+        var folder = new FakeDeviceNode(name, true);
+        folder.Children.AddRange(children);
+        return folder;
+    }
+
+    public static FakeDeviceNode File(string name, byte[] content, DateTimeOffset? modified = null,
+        DateTimeOffset? created = null) =>
+        new(name, false) { Content = content, ReportedSize = content.Length, Modified = modified, Created = created };
+
+    public FakeDeviceNode? Find(string name) => Name == name
+        ? this
+        : Children.Select(child => child.Find(name)).FirstOrDefault(found => found is not null);
+
+    public PortableDeviceEntry ToEntry() => new(Name, IsFolder, IsFolder ? null : ReportedSize, Modified, Created, this);
+}
+
+// Read-only fake device: a tree in memory, small read chunks, and injectable failures.
+sealed class FakePortableDeviceSource(string backendName, FakeDeviceNode root) : IPortableDeviceSource
+{
+    private const int DeviceNotConnected = unchecked((int)0x8007048F);
+
+    public string BackendName => backendName;
+    public bool Disconnected { get; set; }
+    public Exception? DevicesError { get; init; }
+
+    public Task<IReadOnlyList<PortableDeviceInfo>> GetDevicesAsync(CancellationToken cancellationToken)
+    {
+        if (DevicesError is not null)
+            return Task.FromException<IReadOnlyList<PortableDeviceInfo>>(DevicesError);
+        return Task.FromResult<IReadOnlyList<PortableDeviceInfo>>(
+            [new PortableDeviceInfo(root.Name, @"\\?\usb#vid_05ac&pid_12a8#test#{6ac27878-a6fa-4155-ba85-f98f491d4f33}",
+                this, root.ToEntry())]);
+    }
+
+    public Task<IReadOnlyList<PortableDeviceEntry>> GetChildrenAsync(PortableDeviceEntry folder, CancellationToken cancellationToken)
+    {
+        if (Disconnected)
+            return Task.FromException<IReadOnlyList<PortableDeviceEntry>>(new COMException("gone", DeviceNotConnected));
+        var node = (FakeDeviceNode)folder.Handle;
+        return Task.FromResult<IReadOnlyList<PortableDeviceEntry>>(node.Children.Select(child => child.ToEntry()).ToArray());
+    }
+
+    public Task<Stream> OpenReadAsync(PortableDeviceEntry file, CancellationToken cancellationToken)
+    {
+        if (Disconnected)
+            return Task.FromException<Stream>(new COMException("gone", DeviceNotConnected));
+        var node = (FakeDeviceNode)file.Handle;
+        try
+        {
+            node.OnOpen?.Invoke();
+        }
+        catch (Exception ex)
+        {
+            return Task.FromException<Stream>(ex);
+        }
+        return Task.FromResult<Stream>(new FakeDeviceReadStream(node));
+    }
+}
+
+sealed class FakeDeviceReadStream(FakeDeviceNode node) : Stream
+{
+    private const int ChunkSize = 64 * 1024;
+    private long _position;
+
+    public override bool CanRead => true;
+    public override bool CanSeek => false;
+    public override bool CanWrite => false;
+    public override long Length => throw new NotSupportedException();
+    public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+
+    public override int Read(byte[] buffer, int offset, int count) => ReadCore(buffer.AsSpan(offset, count));
+
+    public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+    {
+        if (node.HangOnRead)
+            return new ValueTask<int>(new TaskCompletionSource<int>().Task);
+        try
+        {
+            return ValueTask.FromResult(ReadCore(buffer.Span));
+        }
+        catch (Exception ex)
+        {
+            return ValueTask.FromException<int>(ex);
+        }
+    }
+
+    private int ReadCore(Span<byte> buffer)
+    {
+        node.OnRead?.Invoke(_position);
+        if (node.FailAfterBytes is { } failAt && _position >= failAt)
+            throw node.ReadError ?? new IOException("interrupted");
+        var limit = node.FailAfterBytes is { } stopAt ? Math.Min(node.Content.Length, stopAt) : node.Content.Length;
+        var count = (int)Math.Min(Math.Min(buffer.Length, ChunkSize), Math.Max(0, limit - _position));
+        node.Content.AsSpan((int)_position, count).CopyTo(buffer);
+        _position += count;
+        return count;
+    }
+
+    public override void Flush() { }
+    public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+    public override void SetLength(long value) => throw new NotSupportedException();
+    public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
 }
 
 sealed class FakeRecycleBinStatusProvider(Func<string, RecycleBinVolumeStatus> status) : IRecycleBinStatusProvider

@@ -73,12 +73,22 @@ public sealed partial class MainWindow : Window
     private readonly UsbDriveMonitor _usbDriveMonitor;
     private IReadOnlyList<string> _pendingMultiSourcePaths = [];
     private DeletionToolView? _deletionToolView;
+    private PhoneImportView? _phoneImportView;
+    // A phone folder returned by the folder picker or a drop; the warning's action opens it in the phone import.
+    private StorageFolder? _pendingPhoneFolder;
+    private string? _phoneWarningText;
 
     public MainWindow(ShellLaunchRequest? shellRequest = null, AppNotificationService? notificationService = null)
     {
         _isPortable = PortableDistributionDetector.IsPortable(AppContext.BaseDirectory);
         _updateService = new GitHubUpdateService(preferPortable: _isPortable);
         InitializeComponent();
+        // The phone action belongs only to the phone warning; any other validation message hides it.
+        ValidationText.RegisterPropertyChangedCallback(TextBlock.TextProperty, (_, _) =>
+        {
+            if (!string.Equals(ValidationText.Text, _phoneWarningText, StringComparison.Ordinal))
+                ValidationPhoneImportButton.Visibility = Visibility.Collapsed;
+        });
         _startupJob = shellRequest?.ScheduledJob;
         _useBackupModeForSource = shellRequest?.UseBackupMode == true;
         _startupSourcePaths = shellRequest?.SourcePaths ?? [];
@@ -206,6 +216,8 @@ public sealed partial class MainWindow : Window
             ShowTransferWorkspace();
             return;
         }
+        if (!LeavePhoneImportWorkspace())
+            return;
         _deletionToolView ??= new DeletionToolView(
             LocalizationService.IsEnglish(_language),
             this,
@@ -220,9 +232,56 @@ public sealed partial class MainWindow : Window
     {
         if (_deletionToolView is not null && !_deletionToolView.RequestNavigateAway())
             return;
+        if (!LeavePhoneImportWorkspace())
+            return;
         DeletionWorkspace.Visibility = Visibility.Collapsed;
         TransferWorkspace.Visibility = Visibility.Visible;
         DeletionToolButton.Content = T("Dosya silme", "File deletion");
+    }
+
+    private void PhoneImportButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (PhoneImportWorkspace.Visibility == Visibility.Visible)
+            ShowTransferWorkspace();
+        else
+            ShowPhoneImportWorkspace(null);
+    }
+
+    private void ValidationPhoneImportButton_Click(object sender, RoutedEventArgs e)
+    {
+        var folder = _pendingPhoneFolder;
+        _pendingPhoneFolder = null;
+        ShowPhoneImportWorkspace(folder);
+    }
+
+    private void ShowPhoneImportWorkspace(StorageFolder? pickedPhoneFolder)
+    {
+        if (DeletionWorkspace.Visibility == Visibility.Visible)
+        {
+            if (_deletionToolView is not null && !_deletionToolView.RequestNavigateAway())
+                return;
+            DeletionWorkspace.Visibility = Visibility.Collapsed;
+            DeletionToolButton.Content = T("Dosya silme", "File deletion");
+        }
+        _phoneImportView ??= new PhoneImportView(LocalizationService.IsEnglish(_language), this);
+        if (pickedPhoneFolder is not null)
+            _phoneImportView.UsePickedFolder(pickedPhoneFolder);
+        PhoneImportContent.Content = _phoneImportView;
+        TransferWorkspace.Visibility = Visibility.Collapsed;
+        PhoneImportWorkspace.Visibility = Visibility.Visible;
+        PhoneImportButton.Content = T("← Transferlere dön", "← Back to transfers");
+    }
+
+    // A running import must reach a safe stopping point first; the view cancels it and keeps the workspace open.
+    private bool LeavePhoneImportWorkspace()
+    {
+        if (PhoneImportWorkspace.Visibility != Visibility.Visible)
+            return true;
+        if (_phoneImportView is not null && !_phoneImportView.RequestNavigateAway())
+            return false;
+        PhoneImportWorkspace.Visibility = Visibility.Collapsed;
+        PhoneImportButton.Content = T("Telefondan aktar", "Import from phone");
+        return true;
     }
 
     private async Task CheckForUpdatesAsync(bool manual)
@@ -572,6 +631,7 @@ public sealed partial class MainWindow : Window
             return;
 
         var isSource = (sender as FrameworkElement)?.Tag?.ToString() == "Source";
+        _pendingPhoneFolder = isSource && string.IsNullOrEmpty(folder.Path) ? folder : null;
         // Phones and other portable devices come back as a StorageFolder without a file-system path.
         if (RejectPickedNonFileSystemFolder(folder.Path, isSource))
             return;
@@ -1327,7 +1387,8 @@ public sealed partial class MainWindow : Window
 
     private void RootGrid_DragOver(object sender, DragEventArgs e)
     {
-        if (DeletionWorkspace.Visibility == Visibility.Visible)
+        if (DeletionWorkspace.Visibility == Visibility.Visible
+            || PhoneImportWorkspace.Visibility == Visibility.Visible)
         {
             e.AcceptedOperation = DataPackageOperation.None;
             return;
@@ -1428,6 +1489,13 @@ public sealed partial class MainWindow : Window
             args.Cancel = true;
             return;
         }
+        if (PhoneImportWorkspace.Visibility == Visibility.Visible
+            && _phoneImportView is not null
+            && !_phoneImportView.RequestNavigateAway())
+        {
+            args.Cancel = true;
+            return;
+        }
         if (!_isQueueRunning || _closeConfirmed)
             return;
 
@@ -1478,6 +1546,7 @@ public sealed partial class MainWindow : Window
     private async void MainWindow_Closed(object sender, WindowEventArgs args)
     {
         _appWindow.Closing -= AppWindow_Closing;
+        _phoneImportView?.Dispose();
         _usbDriveMonitor.Dispose();
         _trayIcon.Dispose();
         if (_pendingUpdateInstallTiming == UpdateInstallTiming.OnExit
@@ -1567,7 +1636,8 @@ public sealed partial class MainWindow : Window
 
     private async void RootGrid_Drop(object sender, DragEventArgs e)
     {
-        if (DeletionWorkspace.Visibility == Visibility.Visible)
+        if (DeletionWorkspace.Visibility == Visibility.Visible
+            || PhoneImportWorkspace.Visibility == Visibility.Visible)
             return;
         if (!e.DataView.Contains(StandardDataFormats.StorageItems))
             return;
@@ -1575,6 +1645,7 @@ public sealed partial class MainWindow : Window
         var items = await e.DataView.GetStorageItemsAsync();
         if (items.FirstOrDefault(item => item is StorageFolder) is StorageFolder folder)
         {
+            _pendingPhoneFolder = string.IsNullOrEmpty(folder.Path) ? folder : null;
             if (RejectPickedNonFileSystemFolder(folder.Path, isSource: true))
                 return;
             SourceTextBox.Text = folder.Path;
@@ -2540,6 +2611,21 @@ public sealed partial class MainWindow : Window
         DeletionToolButton.Content = DeletionWorkspace.Visibility == Visibility.Visible
             ? T("← Transferlere dön", "← Back to transfers")
             : T("Dosya silme", "File deletion");
+        PhoneImportButton.Content = PhoneImportWorkspace.Visibility == Visibility.Visible
+            ? T("← Transferlere dön", "← Back to transfers")
+            : T("Telefondan aktar", "Import from phone");
+        ValidationPhoneImportButton.Content = T("Telefondan aktar…", "Import from phone…");
+        // The phone view is built in one language; an idle view is rebuilt, a running import keeps its language.
+        if (_phoneImportView is { IsBusy: false })
+        {
+            _phoneImportView.Dispose();
+            _phoneImportView = null;
+            if (PhoneImportWorkspace.Visibility == Visibility.Visible)
+            {
+                _phoneImportView = new PhoneImportView(LocalizationService.IsEnglish(_language), this);
+                PhoneImportContent.Content = _phoneImportView;
+            }
+        }
         CheckUpdatesButton.Content = T("Güncellemeleri kontrol et", "Check for updates");
         foreach (var item in _queue)
             item.SetLanguage(LocalizationService.IsEnglish(_language));
@@ -2657,7 +2743,14 @@ public sealed partial class MainWindow : Window
 
     private void ShowTransferPathWarning(TransferPathKind kind, bool isSource)
     {
-        ValidationText.Text = GetTransferPathWarning(kind, isSource);
+        var offerPhoneImport = kind == TransferPathKind.PortableDevice && isSource;
+        var warning = GetTransferPathWarning(kind, isSource);
+        _phoneWarningText = offerPhoneImport ? warning : null;
+        if (!offerPhoneImport)
+            _pendingPhoneFolder = null;
+        ValidationText.Text = warning;
+        ValidationPhoneImportButton.Content = T("Telefondan aktar…", "Import from phone…");
+        ValidationPhoneImportButton.Visibility = offerPhoneImport ? Visibility.Visible : Visibility.Collapsed;
         ValidationInfoBar.Visibility = Visibility.Visible;
         PreflightInfoBar.Visibility = Visibility.Collapsed;
     }
@@ -2678,10 +2771,10 @@ public sealed partial class MainWindow : Window
             @"This location is a virtual Windows location, not a real folder path. Choose a folder on a drive or network share as the destination, or enter its full path (for example D:\Backup). A phone or portable device can't be the destination."),
         (_, true) => T(
             "Telefon veya taşınabilir aygıt seçildi. iPhone ve Android telefonlar Windows'ta sürücü olarak görünmez; Robocopy bunlardan doğrudan kopyalayamaz. " +
-            "Önce Fotoğraflar uygulamasının İçeri aktar seçeneğiyle ya da Dosya Gezgini ile yerel bir klasöre aktarın, sonra o klasörü kaynak seçin. " +
+            "Fotoğraf ve videoları önce “Telefondan aktar” ile bu bilgisayardaki bir klasöre kopyalayın, sonra o klasörü kaynak seçin. " +
             "İpucu: iPhone'dan aktarma hata verirse iPhone'da Ayarlar > Fotoğraflar > Mac'e veya PC'ye Aktar > Orijinalleri Koru'yu seçin.",
             "A phone or portable device was selected. iPhone and Android phones don't appear as drives in Windows, so Robocopy can't copy from them directly. " +
-            "First transfer the files to a local folder with the Photos app's Import option or File Explorer, then choose that folder as the source. " +
+            "First copy the photos and videos to a folder on this PC with “Import from phone”, then choose that folder as the source. " +
             "Tip: if an iPhone transfer fails, choose Settings > Photos > Transfer to Mac or PC > Keep Originals on the iPhone."),
         _ => T(
             "Telefon veya taşınabilir aygıt hedef olarak seçilemez. iPhone ve Android telefonlar Windows'ta sürücü olarak görünmez; Robocopy bunlara doğrudan yazamaz. " +

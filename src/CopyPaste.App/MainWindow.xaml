@@ -37,6 +37,8 @@
                               HorizontalScrollMode="Enabled" HorizontalScrollBarVisibility="Hidden"
                               VerticalScrollMode="Disabled" VerticalScrollBarVisibility="Disabled" ZoomMode="Disabled">
                     <StackPanel Orientation="Horizontal" Spacing="8">
+                        <Button x:Name="PhoneImportButton" Content="Telefondan aktar"
+                                Style="{StaticResource QuietButtonStyle}" Click="PhoneImportButton_Click" />
                         <Button x:Name="DeletionToolButton" Content="Dosya silme"
                                 Style="{StaticResource QuietButtonStyle}" Click="DeletionToolButton_Click" />
                         <Button x:Name="ReleaseNotesButton" Content="Sürüm notları"
@@ -175,7 +177,17 @@
 
                         <Border x:Name="ValidationInfoBar" Visibility="Collapsed" Background="#321C24"
                                 BorderBrush="#C95366" BorderThickness="1" CornerRadius="8" Padding="12,9">
-                            <TextBlock x:Name="ValidationText" Foreground="#FFB7C1" TextWrapping="Wrap" />
+                            <Grid ColumnSpacing="12">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock x:Name="ValidationText" Foreground="#FFB7C1" TextWrapping="Wrap"
+                                           VerticalAlignment="Center" />
+                                <Button x:Name="ValidationPhoneImportButton" Grid.Column="1" Content="Telefondan aktar…"
+                                        Visibility="Collapsed" VerticalAlignment="Center"
+                                        Style="{StaticResource QuietButtonStyle}" Click="ValidationPhoneImportButton_Click" />
+                            </Grid>
                         </Border>
                         <Border x:Name="PreflightInfoBar" Visibility="Collapsed" Background="#152A26"
                                 BorderBrush="#2E876F" BorderThickness="1" CornerRadius="8" Padding="12,9">
@@ -543,6 +555,13 @@
         <Grid x:Name="DeletionWorkspace" Grid.Row="1" Visibility="Collapsed"
               Background="{StaticResource PageBrush}" Canvas.ZIndex="10">
             <ContentControl x:Name="DeletionToolContent"
+                            HorizontalContentAlignment="Stretch"
+                            VerticalContentAlignment="Stretch" />
+        </Grid>
+
+        <Grid x:Name="PhoneImportWorkspace" Grid.Row="1" Visibility="Collapsed"
+              Background="{StaticResource PageBrush}" Canvas.ZIndex="10">
+            <ContentControl x:Name="PhoneImportContent"
                             HorizontalContentAlignment="Stretch"
                             VerticalContentAlignment="Stretch" />
         </Grid>
