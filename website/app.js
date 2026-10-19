@@ -15,6 +15,8 @@ Object.assign(translations.tr, {
   featureScheduleBody: "Günlük görevler oluşturun; NAS veya ağ bağlantısı geri geldiğinde devam edin.",
   featureDeletion: "Kontrollü silme (1.7.5)",
   featureDeletionBody: "Ana menüdeki ayrı bölümde önce hedefleri görün; Geri Dönüşüm Kutusu varsayılanını veya açıkça onaylanan kalıcı seçenekleri kullanın.",
+  featurePhoneImport: "Telefondan aktar (1.7.6)",
+  featurePhoneImportBody: "iPhone veya Android telefondaki fotoğraf ve videoları bilgisayara kopyalayın; telefon yalnızca okunur, var olan dosyalar atlanır ve her dosya SHA-256 ile doğrulanır.",
   faqDeleteAnswer: "Normal transferler dosya silmez; MIR ve PURGE kapalıdır. 1.7.5 ile ana menüye eklenen ayrı kontrollü silme bölümü yalnızca açıkça seçip önizlediğiniz hedefleri işler.",
   updateNote: "↻ Güncellemeler GitHub Releases üzerinden SHA-256 ile doğrulanır; kurulumda Setup, portable çalışmada ZIP seçilir."
 });
@@ -27,6 +29,8 @@ Object.assign(translations.en, {
   featureScheduleBody: "Create daily tasks and continue when a NAS or network connection returns.",
   featureDeletion: "Controlled deletion (1.7.5)",
   featureDeletionBody: "Preview targets in a dedicated main-menu section, then use the default Recycle Bin mode or explicitly confirmed permanent options.",
+  featurePhoneImport: "Import from phone (1.7.6)",
+  featurePhoneImportBody: "Copy photos and videos from an iPhone or Android phone to your PC; the phone is only read, existing files are skipped, and every file is verified with SHA-256.",
   faqDeleteAnswer: "Normal transfers never delete files; MIR and PURGE remain disabled. The separate controlled deletion section added to the main menu in 1.7.5 processes only targets you explicitly select and preview.",
   updateNote: "↻ GitHub Release updates are verified with SHA-256; installed builds select Setup and portable builds select ZIP."
 });
@@ -34,12 +38,12 @@ Object.assign(translations.en, {
 Object.assign(translations.tr, {
   codeSigningPolicy: "Code signing policy / Kod imzalama politikası",
   privacyPolicy: "Gizlilik",
-  signingNote: "⚠ 1.6.0, 1.7.0 ve 1.7.5 Setup/ZIP paketleri geçici olarak imzasızdır. SHA-256 ile doğrulayın; imzasız MSIX yayımlanmaz."
+  signingNote: "⚠ 1.6.0, 1.7.0, 1.7.5 ve 1.7.6 Setup/ZIP paketleri geçici olarak imzasızdır. SHA-256 ile doğrulayın; imzasız MSIX yayımlanmaz."
 });
 Object.assign(translations.en, {
   codeSigningPolicy: "Code signing policy",
   privacyPolicy: "Privacy",
-  signingNote: "⚠ The 1.6.0, 1.7.0, and 1.7.5 Setup/ZIP packages are temporarily unsigned. Verify SHA-256; no unsigned MSIX is published."
+  signingNote: "⚠ The 1.6.0, 1.7.0, 1.7.5, and 1.7.6 Setup/ZIP packages are temporarily unsigned. Verify SHA-256; no unsigned MSIX is published."
 });
 translations.tr.trustOpen = "GitHub Releases";
 translations.en.trustOpen = "GitHub Releases";

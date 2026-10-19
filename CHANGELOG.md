@@ -1,6 +1,6 @@
 # Değişiklik günlüğü
 
-## 1.7.6 — geliştirme aşamasında
+## 1.7.6
 
 - Başlık menüsüne ayrı bir “Telefondan aktar” çalışma alanı eklendi: USB ile bağlı iPhone veya Android telefon seçilip telefondaki bir klasör (bulunursa varsayılan olarak `DCIM`) bu bilgisayardaki bir klasöre alt klasör yapısı korunarak kopyalanıyor (`DCIM\100APPLE\IMG_0001.HEIC` → `<hedef>\100APPLE\IMG_0001.HEIC`). Telefon yalnızca okunuyor: silme, değiştirme veya yeniden adlandırma yapan hiçbir çağrı kullanılmıyor; Windows'un “aktardıktan sonra sil” seçeneği olan içe aktarma API'si hiç kullanılmıyor. Kaynağın (yol listesi, boyut, tarihler, öznitelikler, SHA-256) tam aktarma, yeniden çalıştırma, iptal ve okuma hatasından sonra birebir aynı kaldığı otomatik testlerle doğrulanıyor.
 - Hedefte aynı göreli yolda aynı adlı dosya varsa üzerine yazılmıyor, “zaten var” diye atlanıyor; iPhone'un bildirdiği boyut gerçek bayttan farklı olabildiği için karar boyuta göre verilmiyor. Böylece yeniden çalıştırmak kaldığı yerden devam ediyor.
@@ -11,6 +11,7 @@
 - Telefona iki bağımsız yoldan erişiliyor: birincil olarak WinRT `StorageDevice` (yolu olan USB bellekler hariç), yedek olarak Dosya Gezgini kabuğu (`IShellItem`, ayrılmış STA iş parçacığında). Birincil yol hata verir, aygıtı göremez veya depolamayı/DCIM'i göremezse diğer yol otomatik deneniyor; kullanılan yol sonuçta ve tanılamada görünüyor, istenirse elle seçilebiliyor.
 - Telefon kilitliyse veya “Bu bilgisayara güven” onaylanmadıysa ve hiç aygıt yoksa Türkçe/İngilizce yönergeler gösteriliyor. “Tanılama bilgisini kopyala” düğmesi uygulama ve Windows sürümünü, her erişim yolunun gördüğü aygıtları, DCIM durumunu, ilk hataları ve HRESULT'ları ve son işlemin sayılarını yalnızca panoya kopyalıyor; aygıt kimliklerindeki seri numarası gibi benzersiz bölümler “…” ile gizleniyor.
 - Kaynak olarak telefon veya taşınabilir aygıt seçildiğinde (klasör seçici veya sürükle-bırak) gösterilen uyarıya “Telefondan aktar…” düğmesi eklendi; uyarı, dosyaların önce Telefondan aktar ile yerel bir klasöre kopyalanıp sonra o klasörün kaynak seçilmesini anlatıyor. Seçicinin döndürdüğü telefon klasörü doğrudan içe aktarma kaynağı olarak açılabiliyor.
+- `v1.7.6` Setup ve portable ZIP paketleri, güvenilir kod imzalama sertifikası bulunmadığı için ürün sahibinin 19 Ekim 2026 tarihli sürüme özel onayıyla açık uyarı ve SHA-256 doğrulamasıyla Authenticode imzasız yayımlanıyor; imzasız MSIX yayımlanmıyor. Bu istisna sonraki sürümlere taşınmaz.
 
 ## 1.7.5
 

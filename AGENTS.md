@@ -3,7 +3,7 @@
 ## Product and communication
 
 - CopyPaste is a Windows x64 desktop application that wraps the built-in Robocopy engine in a modern WinUI 3 interface. It targets .NET 8 and Windows 10 1809 or newer.
-- The repository is `EddizEge/CopyPaste`; the current stable baseline is `v1.7.5` unless the working tree, tags, or GitHub release state proves otherwise.
+- The repository is `EddizEge/CopyPaste`; the current stable baseline is `v1.7.6` unless the working tree, tags, or GitHub release state proves otherwise.
 - Speak with the product owner in Turkish unless they ask for another language. Keep technical names, commands, and code identifiers unchanged.
 - User-visible application text must support both Turkish and English through the existing localization approach. Do not add hard-coded one-language UI strings.
 - Keep the existing dark, compact, card-based visual language and purple accent palette. Preserve accessibility, keyboard use, scaling, and small-window behavior.
@@ -121,11 +121,12 @@ commands remain unavailable in portable mode. Release automation must fail rathe
 silently publish a release when the portable artifact or its SHA-256 entry is missing.
 
 `v1.6.0` and `v1.7.0` are product-owner-approved unsigned exceptions dated July 23,
-2026, and `v1.7.5` is a separate product-owner-approved unsigned exception dated
-October 16, 2026: for any of these versions publish only the Setup EXE, portable ZIP,
-and `SHA256SUMS.txt`, prominently identify Setup/ZIP as Authenticode-unsigned, and do
-not publish an unsigned MSIX. The workflow may allow this only when the tag is
-exactly `v1.6.0`, `v1.7.0`, or `v1.7.5` and the temporary repository variable
+2026, `v1.7.5` is a separate product-owner-approved unsigned exception dated
+October 16, 2026, and `v1.7.6` is a separate product-owner-approved unsigned exception
+dated October 19, 2026: for any of these versions publish only the Setup EXE, portable
+ZIP, and `SHA256SUMS.txt`, prominently identify Setup/ZIP as Authenticode-unsigned, and
+do not publish an unsigned MSIX. The workflow may allow this only when the tag is
+exactly `v1.6.0`, `v1.7.0`, `v1.7.5`, or `v1.7.6` and the temporary repository variable
 `ALLOW_UNSIGNED_RELEASE` is exactly `true`; remove the variable after the release
 completes. These exceptions do not authorize any later release.
 
@@ -213,7 +214,7 @@ Keep this roadmap available across separate tasks, but re-check the code before 
   explicit product-owner confirmation naming the specific version.
 - Keep GitHub/web distribution separate: Setup EXE, portable ZIP, and
   `SHA256SUMS.txt` may continue only under the signing rules for that exact release.
-  The approved `v1.6.0`/`v1.7.0`/`v1.7.5` unsigned exceptions do not extend to `v1.8.0`;
+  The approved `v1.6.0`/`v1.7.0`/`v1.7.5`/`v1.7.6` unsigned exceptions do not extend to `v1.8.0`;
   do not publish an unsigned MSIX outside Microsoft Store.
 
 ### Distribution work still outstanding

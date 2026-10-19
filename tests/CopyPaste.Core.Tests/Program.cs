@@ -18,7 +18,7 @@ Assert(RobocopyRunner.CreateResult(16).Status == CopyJobStatus.Failed,
     "Exit 16 ciddi hata olarak başarısız olmalı");
 Assert(!new RobocopyResult(-1, CopyJobStatus.Cancelled, "iptal").IsSuccessful,
     "İptal sonucu başarılı sayılmamalı");
-Assert(ReleaseNotesCatalog.All is [{ Version: "1.7.6", IsPreview: true }, { Version: "1.7.5", IsPreview: false },
+Assert(ReleaseNotesCatalog.All is [{ Version: "1.7.6", IsPreview: false }, { Version: "1.7.5", IsPreview: false },
            { Version: "1.7.0", IsPreview: false }, ..]
        && ReleaseNotesCatalog.All.Select(note => note.Version).Distinct(StringComparer.OrdinalIgnoreCase).Count()
           == ReleaseNotesCatalog.All.Count

@@ -10,20 +10,22 @@ public static class ReleaseNotesCatalog
 {
     public static IReadOnlyList<ReleaseNote> All { get; } =
     [
-        new("1.7.6", true,
+        new("1.7.6", false,
         [
             "Yeni “Telefondan aktar” bölümü, USB ile bağlı iPhone veya Android telefondaki fotoğraf ve videoları (varsayılan olarak DCIM klasörünü) alt klasör yapısını koruyarak bu bilgisayardaki bir klasöre kopyalıyor. Telefon yalnızca okunuyor; telefonda hiçbir dosya silinmiyor, değiştirilmiyor veya yeniden adlandırılmıyor.",
             "Hedefte aynı adla bulunan dosyaların üzerine yazılmıyor, bu dosyalar atlanıyor; aktarmayı yeniden başlatmak kaldığı yerden devam ediyor. Her dosya önce geçici bir adla yazılıp SHA-256 ile doğrulanıyor; iptal veya bağlantı kopması hedefte yarım dosya bırakmıyor.",
             "Başlamadan önce dosya sayısı, telefonun bildirdiği toplam boyut ve hedefteki boş alan gösteriliyor. Sonuçta aktarılan, zaten var olduğu için atlanan, başarısız ve işlenmeyen dosyalar ayrı ayrı belirtiliyor; iPhone'un “Otomatik” aktarım biçimi bir dosyayı veremezse “Orijinalleri Koru” ayarı öneriliyor.",
             "Telefona iki ayrı Windows erişim yoluyla (Windows depolama API'si ve Dosya Gezgini kabuğu) ulaşılıyor; biri telefonu veya DCIM klasörünü göremezse diğeri otomatik deneniyor. “Tanılama bilgisini kopyala” düğmesi, sorun bildirmek için aygıt ve hata bilgilerini yalnızca panoya kopyalıyor; hiçbir yere gönderilmiyor.",
-            "Kaynak olarak telefon veya taşınabilir aygıt seçildiğinde gösterilen uyarı artık “Telefondan aktar…” düğmesiyle doğrudan içe aktarmaya yönlendiriyor."
+            "Kaynak olarak telefon veya taşınabilir aygıt seçildiğinde gösterilen uyarı artık “Telefondan aktar…” düğmesiyle doğrudan içe aktarmaya yönlendiriyor.",
+            "1.7.6 Setup ve portable ZIP paketleri, güvenilir kod imzalama sertifikası henüz bulunmadığı için Authenticode imzasız yayımlanıyor; SHA-256 değerleri yayımlanır ve imzasız MSIX dağıtılmaz."
         ],
         [
             "The new “Import from phone” section copies photos and videos from a USB-connected iPhone or Android phone (the DCIM folder by default) to a folder on this PC, preserving the subfolder structure. The phone is only read; no file on the phone is deleted, changed, or renamed.",
             "Files that already exist at the destination with the same name are skipped instead of overwritten, so running the import again resumes where it stopped. Each file is first written under a temporary name and verified with SHA-256; cancelling or losing the connection never leaves a partial file at the destination.",
             "Before starting, the file count, the total size reported by the phone, and the free space at the destination are shown. The result lists copied files, files skipped because they already exist, failed files, and files not processed; if the iPhone's “Automatic” transfer format can't deliver a file, the “Keep Originals” setting is suggested.",
             "The phone is reached through two separate Windows access paths (the Windows storage API and the File Explorer shell); if one can't see the phone or its DCIM folder, the other is tried automatically. The “Copy diagnostic information” button copies device and error details to the clipboard only, for reporting a problem; nothing is sent anywhere.",
-            "The warning shown when a phone or portable device is selected as the source now offers an “Import from phone…” button that leads directly to the import."
+            "The warning shown when a phone or portable device is selected as the source now offers an “Import from phone…” button that leads directly to the import.",
+            "The 1.7.6 Setup and portable ZIP are published without Authenticode signatures because no trusted code-signing certificate is available yet; SHA-256 hashes are published and no unsigned MSIX is distributed."
         ]),
         new("1.7.5", false,
         [
