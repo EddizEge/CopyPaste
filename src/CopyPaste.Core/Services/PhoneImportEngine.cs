@@ -265,13 +265,15 @@ public sealed class PhoneImportEngine(PhoneImportOptions? options = null)
             var directory = Path.GetDirectoryName(finalPath)!;
             Directory.CreateDirectory(directory);
 
-            temporaryPath = Path.Combine(directory, TemporaryName(Path.GetFileName(finalPath)));
+            var candidatePath = Path.Combine(directory, TemporaryName(Path.GetFileName(finalPath)));
             byte[] expectedHash;
             using (var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256))
             {
-                await using (var target = new FileStream(temporaryPath, FileMode.CreateNew, FileAccess.Write,
+                await using (var target = new FileStream(candidatePath, FileMode.CreateNew, FileAccess.Write,
                                  FileShare.None, bufferSize: 0, FileOptions.Asynchronous))
                 {
+                    // Mark the file for cleanup only once CreateNew succeeded: never remove a file this import didn't create.
+                    temporaryPath = candidatePath;
                     while (true)
                     {
                         cancellationToken.ThrowIfCancellationRequested();
@@ -294,19 +296,19 @@ public sealed class PhoneImportEngine(PhoneImportOptions? options = null)
                 expectedHash = hash.GetHashAndReset();
             }
 
-            _options.AfterTemporaryFileWritten?.Invoke(temporaryPath, finalPath);
+            _options.AfterTemporaryFileWritten?.Invoke(candidatePath, finalPath);
             byte[] writtenHash;
-            await using (var check = new FileStream(temporaryPath, FileMode.Open, FileAccess.Read, FileShare.Read,
+            await using (var check = new FileStream(candidatePath, FileMode.Open, FileAccess.Read, FileShare.Read,
                              bufferSize: 0, FileOptions.Asynchronous | FileOptions.SequentialScan))
                 writtenHash = await SHA256.HashDataAsync(check, cancellationToken).ConfigureAwait(false);
             if (!CryptographicOperations.FixedTimeEquals(expectedHash, writtenHash))
                 throw new PhoneImportVerificationException("SHA-256 of the written file differs from the device data.");
 
             cancellationToken.ThrowIfCancellationRequested();
-            ApplyDeviceTimestamps(temporaryPath, item.Entry);
+            ApplyDeviceTimestamps(candidatePath, item.Entry);
             try
             {
-                File.Move(temporaryPath, finalPath, overwrite: false);
+                File.Move(candidatePath, finalPath, overwrite: false);
                 temporaryPath = null;
             }
             catch (IOException) when (File.Exists(finalPath) || Directory.Exists(finalPath))
