@@ -2,7 +2,6 @@ using CopyPaste.Core.Models;
 using CopyPaste.Core.Services;
 using Windows.Devices.Enumeration;
 using Windows.Devices.Portable;
-using Windows.Media.Import;
 using Windows.Storage;
 
 namespace CopyPaste.App.Services;
@@ -113,44 +112,4 @@ public sealed class WinRtPortableDeviceSource : IPortableDeviceSource
     private static T Own<T>(PortableDeviceEntry entry) where T : class =>
         entry.Handle as T
         ?? throw new ArgumentException("The entry does not belong to the WinRT device source.", nameof(entry));
-}
-
-/// <summary>
-/// Read-only Windows.Media.Import facts for diagnostics. Only IsSupportedAsync and FindAllSourcesAsync are called;
-/// no import session is created and nothing is imported or deleted through this API.
-/// </summary>
-public static class MediaImportDiagnostics
-{
-    public static async Task<IReadOnlyList<string>> CollectAsync(CancellationToken cancellationToken)
-    {
-        var lines = new List<string>();
-        try
-        {
-            var supported = await PhotoImportManager.IsSupportedAsync().AsTask(cancellationToken)
-                .WaitAsync(TimeSpan.FromSeconds(20), cancellationToken).ConfigureAwait(false);
-            lines.Add($"IsSupportedAsync = {supported}");
-            if (!supported)
-                return lines;
-            var sources = await PhotoImportManager.FindAllSourcesAsync().AsTask(cancellationToken)
-                .WaitAsync(TimeSpan.FromSeconds(30), cancellationToken).ConfigureAwait(false);
-            lines.Add($"FindAllSourcesAsync: {sources.Count}");
-            foreach (var source in sources)
-            {
-                try
-                {
-                    lines.Add($"• \"{source.DisplayName}\" | {source.Type} | {source.Manufacturer} {source.Model} | "
-                              + $"{source.ConnectionProtocol} | locked={source.IsLocked?.ToString() ?? "?"}");
-                }
-                catch (Exception ex)
-                {
-                    lines.Add($"• {PhoneImportErrors.FormatHResult(ex.HResult)} {ex.Message}");
-                }
-            }
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
-        {
-            lines.Add($"{PhoneImportErrors.FormatHResult(ex.HResult)} {ex.GetType().Name}: {ex.Message}");
-        }
-        return lines;
-    }
 }

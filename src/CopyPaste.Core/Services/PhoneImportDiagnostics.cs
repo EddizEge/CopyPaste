@@ -21,7 +21,6 @@ public sealed class PhoneImportDiagnostics
     public PortableDeviceOpenResult? LastOpen { get; set; }
     public PhoneImportPlan? LastPlan { get; set; }
     public PhoneImportResult? LastResult { get; set; }
-    public IReadOnlyList<string> MediaImportLines { get; set; } = [];
     public IReadOnlyList<string> ExtraLines { get; set; } = [];
 
     public void RecordError(string context, Exception exception) =>
@@ -64,17 +63,10 @@ public sealed class PhoneImportDiagnostics
                     var opened = device.Root is null
                         ? $" — {T("açılamadı", "not opened")} {PhoneImportErrors.FormatHResult(device.ErrorHResult ?? 0)} {OneLine(device.ErrorMessage)}"
                         : string.Empty;
-                    text.AppendLine($"    • \"{device.Name}\" | {device.Id}{opened}");
+                    text.AppendLine($"    • \"{device.Name}\" | {MaskDeviceId(device.Id)}{opened}");
                 }
             }
         }
-
-        text.AppendLine();
-        text.AppendLine("Windows.Media.Import:");
-        if (MediaImportLines.Count == 0)
-            text.AppendLine("  " + T("bilgi yok", "no information"));
-        foreach (var line in MediaImportLines)
-            text.AppendLine("  " + line);
 
         text.AppendLine();
         if (LastOpen is { } open)
@@ -120,6 +112,49 @@ public sealed class PhoneImportDiagnostics
             text.AppendLine(line);
         return text.ToString().TrimEnd();
     }
+
+    /// <summary>
+    /// Hides the unique part of a device-interface path (USB serial number, WPD instance identifiers) so the text can
+    /// be shared; the bus, VID/PID or vendor/product, and interface class GUIDs stay visible.
+    /// <c>\\?\usb#vid_05ac&amp;pid_12a8#00008110…#{6ac27878-…}</c> → <c>\\?\usb#vid_05ac&amp;pid_12a8#…#{6ac27878-…}</c>.
+    /// </summary>
+    public static string MaskDeviceId(string? id)
+    {
+        if (string.IsNullOrEmpty(id))
+            return id ?? string.Empty;
+        var start = id.IndexOf(@"\\?\", StringComparison.Ordinal);
+        if (start < 0)
+            start = id.IndexOf(@"\\.\", StringComparison.Ordinal);
+        if (start < 0)
+            return id;
+        // In shell parsing names the device path ends where the storage part ("\SID-{…}\DCIM") begins.
+        var end = id.IndexOf('\\', start + 4);
+        if (end < 0)
+            end = id.Length;
+        var segments = id[start..end].Split('#');
+        for (var index = 1; index < segments.Length; index++)
+        {
+            if (!KeepDeviceIdSegment(segments[index], index))
+                segments[index] = "…";
+        }
+        return id[..start] + string.Join('#', segments) + id[end..];
+    }
+
+    private static readonly string[] KnownInterfaceClasses =
+    [
+        "{6ac27878-a6fa-4155-ba85-f98f491d4f33}", // GUID_DEVINTERFACE_WPD
+        "{f33fdc04-d1ac-4e8e-9a30-19bbd4b108ae}", // GUID_DEVINTERFACE_WPD_PRIVATE
+        "{53f56307-b6bf-11d0-94f2-00a0c91efb8b}", // GUID_DEVINTERFACE_DISK
+        "{53f5630d-b6bf-11d0-94f2-00a0c91efb8b}"  // GUID_DEVINTERFACE_VOLUME
+    ];
+
+    private static readonly string[] HardwareIdMarkers = ["vid_", "pid_", "ven_", "prod_", "rev_"];
+
+    private static bool KeepDeviceIdSegment(string segment, int index) =>
+        (index == 1 && segment.Equals("wpdbusenum", StringComparison.OrdinalIgnoreCase))
+        || segment.StartsWith("_??_", StringComparison.Ordinal)
+        || HardwareIdMarkers.Any(marker => segment.Contains(marker, StringComparison.OrdinalIgnoreCase))
+        || KnownInterfaceClasses.Any(guid => segment.Equals(guid, StringComparison.OrdinalIgnoreCase));
 
     public static string FormatBytes(long value)
     {

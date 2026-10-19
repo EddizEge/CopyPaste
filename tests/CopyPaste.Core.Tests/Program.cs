@@ -1713,8 +1713,7 @@ try
         Discovery = failingDiscovery,
         LastOpen = fallbackOpen,
         LastPlan = structurePlan,
-        LastResult = brokenResult,
-        MediaImportLines = ["IsSupportedAsync = True", "FindAllSourcesAsync: 0"]
+        LastResult = brokenResult
     };
     phoneDiagnostics.RecordError("WinRT aygıt listesi", unchecked((int)0x80070005), "Access is denied.");
     var turkishDiagnostics = phoneDiagnostics.Build(english: false);
@@ -1803,11 +1802,133 @@ try
         Assert(shellNameChildren is [{ Name: "kısayol.url", IsFolder: false }],
             "Gerçek kabuk arka ucu: uzantısı her zaman gizlenen dosyada bile ad uzantısıyla (PKEY_FileName) okunmalı");
     }
+
+    // 14) Tanılamada seri numarası maskesi: VID/PID ve arabirim sınıfı kalır, benzersiz bölüm "…" olur.
+    const string iphoneSerial = "00008110001E2D3A0E88801E";
+    var maskCases = new (string? Input, string Expected)[]
+    {
+        ($@"\\?\usb#vid_05ac&pid_12a8#{iphoneSerial}#{{6ac27878-a6fa-4155-ba85-f98f491d4f33}}",
+            @"\\?\usb#vid_05ac&pid_12a8#…#{6ac27878-a6fa-4155-ba85-f98f491d4f33}"),
+        ($@"\\?\USB#VID_05AC&PID_12A8#{iphoneSerial}#{{6AC27878-A6FA-4155-BA85-F98F491D4F33}}",
+            @"\\?\USB#VID_05AC&PID_12A8#…#{6AC27878-A6FA-4155-BA85-F98F491D4F33}"),
+        ($@"::{{20D04FE0-3AEA-1069-A2D8-08002B30309D}}\\\?\usb#vid_05ac&pid_12a8#{iphoneSerial}#{{6ac27878-a6fa-4155-ba85-f98f491d4f33}}\SID-{{10001,,31708622848}}\DCIM",
+            @"::{20D04FE0-3AEA-1069-A2D8-08002B30309D}\\\?\usb#vid_05ac&pid_12a8#…#{6ac27878-a6fa-4155-ba85-f98f491d4f33}\SID-{10001,,31708622848}\DCIM"),
+        (@"\\?\swd#wpdbusenum#_??_usbstor#disk&ven_samsung&prod_flash_drive&rev_1100#0376023070015479&0#{53f56307-b6bf-11d0-94f2-00a0c91efb8b}#{6ac27878-a6fa-4155-ba85-f98f491d4f33}",
+            @"\\?\swd#wpdbusenum#_??_usbstor#disk&ven_samsung&prod_flash_drive&rev_1100#…#{53f56307-b6bf-11d0-94f2-00a0c91efb8b}#{6ac27878-a6fa-4155-ba85-f98f491d4f33}"),
+        (@"\\?\SWD#WPDBUSENUM#{1F0A1B2C-3D4E-5F60-7182-93A4B5C6D7E8}#0000000000100000",
+            @"\\?\SWD#WPDBUSENUM#…#…"),
+        ("picker:DCIM", "picker:DCIM"),
+        ("", ""),
+        (null, "")
+    };
+    foreach (var (input, expected) in maskCases)
+    {
+        var masked = PhoneImportDiagnostics.MaskDeviceId(input);
+        Assert(masked == expected, $"Tanılama seri maskesi '{input}' için '{expected}' olmalı, '{masked}' bulundu");
+    }
+    var maskedDiscovery = new PortableDeviceDiscovery(
+        [],
+        [new PortableDeviceBackendReport("Shell",
+            [new PortableDeviceInfo("Apple iPhone",
+                $@"::{{20D04FE0-3AEA-1069-A2D8-08002B30309D}}\\\?\usb#vid_05ac&pid_12a8#{iphoneSerial}#{{6ac27878-a6fa-4155-ba85-f98f491d4f33}}",
+                workingFallback, null, unchecked((int)0x80070005), "denied")],
+            null, null, TimeSpan.FromMilliseconds(5))]);
+    var maskedText = new PhoneImportDiagnostics { Discovery = maskedDiscovery }.Build(english: false);
+    Assert(!maskedText.Contains(iphoneSerial, StringComparison.OrdinalIgnoreCase)
+           && maskedText.Contains("vid_05ac&pid_12a8#…#", StringComparison.Ordinal),
+        "Tanılama metni aygıt seri numarasını içermemeli, VID/PID'yi göstermeli");
+
+    // 15) Kaynak değişmezliği: gerçek kabuk arka ucuyla yerel "aygıt klasörü" tam aktarma, yeniden çalıştırma,
+    // iptal ve okuma hatasından sonra yol listesi, boyut, tarihler, öznitelikler ve SHA-256 olarak birebir aynı kalmalı.
+    var unchangedSource = Path.Combine(phoneTestRoot, "değişmez-kaynak");
+    Directory.CreateDirectory(Path.Combine(unchangedSource, "100APPLE"));
+    Directory.CreateDirectory(Path.Combine(unchangedSource, "101APPLE", "iç içe"));
+    var unchangedFiles = new (string RelativePath, int Size)[]
+    {
+        (Path.Combine("100APPLE", "IMG_0001.HEIC"), 300_000),
+        (Path.Combine("100APPLE", "Çiçek ğüşı.jpg"), 12_345),
+        (Path.Combine("100APPLE", "salt-okunur.JPG"), 4_096),
+        (Path.Combine("101APPLE", "iç içe", "VID_0002.MOV"), 2_500_000),
+        (Path.Combine("101APPLE", "IMG_0003.AAE"), 700)
+    };
+    var fixedTime = new DateTime(2022, 7, 8, 9, 10, 11, DateTimeKind.Utc);
+    foreach (var (relativePath, size) in unchangedFiles)
+    {
+        var path = Path.Combine(unchangedSource, relativePath);
+        await File.WriteAllBytesAsync(path, RandomNumberGenerator.GetBytes(size));
+        File.SetCreationTimeUtc(path, fixedTime.AddDays(-3));
+        File.SetLastWriteTimeUtc(path, fixedTime);
+    }
+    var readOnlySourceFile = Path.Combine(unchangedSource, "100APPLE", "salt-okunur.JPG");
+    File.SetAttributes(readOnlySourceFile, FileAttributes.ReadOnly | FileAttributes.Archive);
+    var lockedSourceFile = Path.Combine(unchangedSource, "100APPLE", "Çiçek ğüşı.jpg");
+    var sourceBefore = SourceSnapshot.Take(unchangedSource);
+    using (var unchangedShell = new ShellPortableDeviceSource())
+    {
+        var unchangedFolder = await unchangedShell.GetFolderAsync(unchangedSource, CancellationToken.None);
+        var unchangedEngine = new PhoneImportEngine(new PhoneImportOptions { ProgressInterval = TimeSpan.Zero, BufferSize = 64 * 1024 });
+        async Task<PhoneImportResult> RunUnchangedAsync(string destinationName, IProgress<PhoneImportProgress>? progress,
+            CancellationToken cancellationToken)
+        {
+            var plan = await unchangedEngine.PlanAsync(unchangedShell, unchangedFolder, unchangedSource,
+                Path.Combine(phoneTestRoot, destinationName), null, CancellationToken.None);
+            return await unchangedEngine.ImportAsync(plan, progress, cancellationToken);
+        }
+        string SourceDifference() => SourceSnapshot.Describe(sourceBefore, SourceSnapshot.Take(unchangedSource));
+
+        // (a) tam aktarma
+        var fullResult = await RunUnchangedAsync("değişmez-hedef", null, CancellationToken.None);
+        var afterFull = SourceDifference();
+        Assert(fullResult is { Status: PhoneImportStatus.Completed, CopiedCount: 5 } && afterFull.Length == 0,
+            "Kaynak değişmezliği (a) tam aktarma: kaynak birebir aynı kalmalı " + afterFull);
+        // (b) yeniden çalıştırma: hepsi atlanır
+        var rerunUnchanged = await RunUnchangedAsync("değişmez-hedef", null, CancellationToken.None);
+        var afterRerun = SourceDifference();
+        Assert(rerunUnchanged is { CopiedCount: 0, SkippedExistingCount: 5 } && afterRerun.Length == 0,
+            "Kaynak değişmezliği (b) yeniden çalıştırma: hepsi atlanmalı, kaynak birebir aynı kalmalı " + afterRerun);
+        // (c) aktarma ortasında iptal (büyük videonun okunması sürerken)
+        using var unchangedCancellation = new CancellationTokenSource();
+        var cancelProgress = new InlineProgress<PhoneImportProgress>(value =>
+        {
+            // Diğer dört dosyadan (317 141 bayt) sonra videonun en az 128 KB'ı okunmuşken: okuma döngüsünün ortası.
+            if (value.CurrentItem?.EndsWith("VID_0002.MOV", StringComparison.Ordinal) == true
+                && value.CopiedBytes > 317_141 + 128 * 1024)
+                unchangedCancellation.Cancel();
+        });
+        var cancelledUnchanged = await RunUnchangedAsync("değişmez-iptal", cancelProgress, unchangedCancellation.Token);
+        var afterCancel = SourceDifference();
+        Assert(cancelledUnchanged is { Status: PhoneImportStatus.Cancelled, NotProcessedCount: > 0 }
+               && !File.Exists(Path.Combine(phoneTestRoot, "değişmez-iptal", "101APPLE", "iç içe", "VID_0002.MOV"))
+               && PhoneLeftovers(Path.Combine(phoneTestRoot, "değişmez-iptal")).Length == 0
+               && afterCancel.Length == 0,
+            "Kaynak değişmezliği (c) iptal: yarım/geçici dosya kalmamalı, kaynak birebir aynı kalmalı " + afterCancel
+            + $" (durum {cancelledUnchanged.Status}, işlenmeyen {cancelledUnchanged.NotProcessedCount})");
+        // (d) okuma hatası: bir kaynak dosya FileShare.None ile kilitliyken; hata sonrası devam
+        PhoneImportResult lockedResult;
+        using (new FileStream(lockedSourceFile, FileMode.Open, FileAccess.Read, FileShare.None))
+            lockedResult = await RunUnchangedAsync("değişmez-kilit", null, CancellationToken.None);
+        var afterLock = SourceDifference();
+        Assert(lockedResult is { Status: PhoneImportStatus.CompletedWithErrors, CopiedCount: 4, FailedCount: 1, NotProcessedCount: 0 }
+               && lockedResult.Failures is [{ RelativePath: var lockedPath }] && lockedPath.EndsWith("Çiçek ğüşı.jpg", StringComparison.Ordinal)
+               && PhoneLeftovers(Path.Combine(phoneTestRoot, "değişmez-kilit")).Length == 0
+               && afterLock.Length == 0,
+            "Kaynak değişmezliği (d) okuma hatası: o dosya başarısız sayılıp devam edilmeli, kaynak birebir aynı kalmalı " + afterLock
+            + $" (durum {lockedResult.Status}, aktarılan {lockedResult.CopiedCount}, başarısız {lockedResult.FailedCount}: "
+            + string.Join(", ", lockedResult.Failures.Select(failure => $"{failure.RelativePath} {PhoneImportErrors.FormatHResult(failure.HResult)}")) + ")");
+        Console.WriteLine($"Telefon testi: kaynak değişmezliği {sourceBefore.Count} öğe × 4 senaryo (tam, yeniden, iptal, kilit) karşılaştırıldı; "
+            + $"kilitli dosya hatası {string.Join(", ", lockedResult.Failures.Select(failure => PhoneImportErrors.FormatHResult(failure.HResult)))}.");
+    }
+    Assert((File.GetAttributes(readOnlySourceFile) & FileAttributes.ReadOnly) != 0,
+        "Kaynak değişmezliği: salt okunur öznitelik korunmalı");
 }
 finally
 {
     if (Directory.Exists(phoneTestRoot))
+    {
+        foreach (var file in Directory.EnumerateFiles(phoneTestRoot, "*", SearchOption.AllDirectories))
+            File.SetAttributes(file, FileAttributes.Normal);
         Directory.Delete(phoneTestRoot, recursive: true);
+    }
 }
 
 if (args.Contains("--stress", StringComparer.OrdinalIgnoreCase))
@@ -1989,6 +2110,39 @@ sealed class ByteStubHttpMessageHandler(byte[] content) : HttpMessageHandler
 sealed class InlineProgress<T>(Action<T> handler) : IProgress<T>
 {
     public void Report(T value) => handler(value);
+}
+
+// Kaynak klasörün karşılaştırılabilir görüntüsü: göreli yol, boyut, değiştirilme/oluşturma zamanı, öznitelikler, SHA-256.
+// Son erişim zamanı bilerek dışarıda: salt okuma da onu güncelleyebilir.
+static class SourceSnapshot
+{
+    public static IReadOnlyList<string> Take(string root)
+    {
+        var lines = new List<string>();
+        foreach (var directory in Directory.EnumerateDirectories(root, "*", SearchOption.AllDirectories))
+        {
+            var info = new DirectoryInfo(directory);
+            lines.Add($"D|{Path.GetRelativePath(root, directory)}|{info.LastWriteTimeUtc.Ticks}|{info.CreationTimeUtc.Ticks}|{info.Attributes}");
+        }
+        foreach (var file in Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories))
+        {
+            var info = new FileInfo(file);
+            using var stream = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.Read);
+            lines.Add($"F|{Path.GetRelativePath(root, file)}|{info.Length}|{info.LastWriteTimeUtc.Ticks}|{info.CreationTimeUtc.Ticks}"
+                      + $"|{info.Attributes}|{Convert.ToHexString(SHA256.HashData(stream))}");
+        }
+        lines.Sort(StringComparer.Ordinal);
+        return lines;
+    }
+
+    public static string Describe(IReadOnlyList<string> before, IReadOnlyList<string> after)
+    {
+        var removed = before.Except(after).ToArray();
+        var added = after.Except(before).ToArray();
+        return removed.Length + added.Length == 0
+            ? string.Empty
+            : "[önce: " + string.Join("; ", removed.Take(4)) + " | sonra: " + string.Join("; ", added.Take(4)) + "]";
+    }
 }
 
 sealed class FakeDeviceNode

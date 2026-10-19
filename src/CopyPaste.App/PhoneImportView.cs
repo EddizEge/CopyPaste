@@ -384,7 +384,7 @@ public sealed class PhoneImportView : UserControl, IDisposable
         ToolTipService.SetToolTip(_copyDiagnosticsButton, T(
             "Uygulama ve Windows sürümünü, görülen aygıtları ve hataları panoya kopyalar; hiçbir yere gönderilmez.",
             "Copies the app and Windows version, the devices seen, and the errors to the clipboard; nothing is sent anywhere."));
-        _copyDiagnosticsButton.Click += async (_, _) => await CopyDiagnosticsAsync();
+        _copyDiagnosticsButton.Click += (_, _) => CopyDiagnostics();
         _resultButtons.Children.Add(_openDestinationButton);
         _resultButtons.Children.Add(_retryButton);
         _resultButtons.Children.Add(_copyDiagnosticsButton);
@@ -935,19 +935,17 @@ public sealed class PhoneImportView : UserControl, IDisposable
         }
     }
 
-    private async Task CopyDiagnosticsAsync()
+    private void CopyDiagnostics()
     {
         _copyDiagnosticsButton.IsEnabled = false;
         _diagnosticsStatus.Text = T("Tanılama bilgisi hazırlanıyor…", "Preparing diagnostic information…");
         try
         {
-            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(60));
             _diagnostics.AppVersion = Assembly.GetExecutingAssembly().GetName().Version?.ToString() ?? "?";
             _diagnostics.Distribution = PortableDistributionDetector.IsPortable(AppContext.BaseDirectory)
                 ? "portable"
                 : T("kurulu", "installed");
             _diagnostics.BackendPreference = (_backendBox.SelectedItem as BackendChoice)?.Preference.ToString() ?? "Automatic";
-            _diagnostics.MediaImportLines = await Task.Run(() => MediaImportDiagnostics.CollectAsync(timeout.Token));
             var extra = new List<string>
             {
                 $"WinRT: {T("yolu olan sürücü (atlandı)", "drives with a path (skipped)")} {_winRt.SkippedDrivesWithPath}"
