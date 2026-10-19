@@ -8,6 +8,10 @@ belgelerine bakabilirsiniz.
 
 ## CopyPaste 1.7.6
 
+- Düzeltme: 1.7.5 Setup ve portable ZIP paketlerinde uygulamanın kaynak dosyaları
+  (`CopyPaste.App.pri`, `*.xbf`) eksikti ve uygulama açılışta kapanıyordu. 1.7.5
+  kuruluysa ve açılmıyorsa 1.7.6'yı GitHub'dan indirip kurun; açılamayan sürüm
+  kendini güncelleyemez
 - Başlık menüsünde ayrı “Telefondan aktar” bölümü: USB ile bağlı iPhone veya Android
   telefondaki seçilen klasör (iPhone'da `DCIM`) alt klasör yapısı korunarak bu
   bilgisayardaki bir klasöre kopyalanır

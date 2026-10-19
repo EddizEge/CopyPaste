@@ -12,6 +12,7 @@ public static class ReleaseNotesCatalog
     [
         new("1.7.6", false,
         [
+            "Düzeltme: 1.7.5 paketlerinde uygulamanın kaynak dosyaları eksik olduğu için uygulama açılışta kapanıyordu. 1.7.6 bu dosyaları pakete ekliyor ve her yayından önce ana pencerenin yüklendiğini sınıyor.",
             "Yeni “Telefondan aktar” bölümü, USB ile bağlı iPhone veya Android telefondaki fotoğraf ve videoları (varsayılan olarak DCIM klasörünü) alt klasör yapısını koruyarak bu bilgisayardaki bir klasöre kopyalıyor. Telefon yalnızca okunuyor; telefonda hiçbir dosya silinmiyor, değiştirilmiyor veya yeniden adlandırılmıyor.",
             "Hedefte aynı adla bulunan dosyaların üzerine yazılmıyor, bu dosyalar atlanıyor; aktarmayı yeniden başlatmak kaldığı yerden devam ediyor. Her dosya önce geçici bir adla yazılıp SHA-256 ile doğrulanıyor; iptal veya bağlantı kopması hedefte yarım dosya bırakmıyor.",
             "Başlamadan önce dosya sayısı, telefonun bildirdiği toplam boyut ve hedefteki boş alan gösteriliyor. Sonuçta aktarılan, zaten var olduğu için atlanan, başarısız ve işlenmeyen dosyalar ayrı ayrı belirtiliyor; iPhone'un “Otomatik” aktarım biçimi bir dosyayı veremezse “Orijinalleri Koru” ayarı öneriliyor.",
@@ -20,6 +21,7 @@ public static class ReleaseNotesCatalog
             "1.7.6 Setup ve portable ZIP paketleri, güvenilir kod imzalama sertifikası henüz bulunmadığı için Authenticode imzasız yayımlanıyor; SHA-256 değerleri yayımlanır ve imzasız MSIX dağıtılmaz."
         ],
         [
+            "Fix: the 1.7.5 packages were missing the app's resource files, so the app closed on start. 1.7.6 includes these files and checks before every release that the main window loads.",
             "The new “Import from phone” section copies photos and videos from a USB-connected iPhone or Android phone (the DCIM folder by default) to a folder on this PC, preserving the subfolder structure. The phone is only read; no file on the phone is deleted, changed, or renamed.",
             "Files that already exist at the destination with the same name are skipped instead of overwritten, so running the import again resumes where it stopped. Each file is first written under a temporary name and verified with SHA-256; cancelling or losing the connection never leaves a partial file at the destination.",
             "Before starting, the file count, the total size reported by the phone, and the free space at the destination are shown. The result lists copied files, files skipped because they already exist, failed files, and files not processed; if the iPhone's “Automatic” transfer format can't deliver a file, the “Keep Originals” setting is suggested.",
