@@ -12,3 +12,6 @@ TestResults/
 *.user
 *.suo
 *.log
+
+# Local agent notes
+/AGENTS.md
