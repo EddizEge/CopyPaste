@@ -17,6 +17,8 @@ public sealed class PhoneImportOptions
 
     public TimeSpan ProbeTimeout { get; init; } = TimeSpan.FromSeconds(30);
     public int BufferSize { get; init; } = 1024 * 1024;
+
+    /// <summary>Limit for the size-mismatch list. Failed files are always reported in full.</summary>
     public int MaxReportedFailures { get; init; } = 20;
 
     // Test hook: runs after the temporary file is closed and before it is verified and renamed.
@@ -93,7 +95,38 @@ public sealed class PhoneImportEngine(PhoneImportOptions? options = null)
         }
 
         items.Sort((left, right) => StringComparer.OrdinalIgnoreCase.Compare(left.RelativePath, right.RelativePath));
-        return new PhoneImportPlan(
+        return BuildPlan(source, sourceFolder, sourceDisplayPath, destination, items, scanFailures);
+    }
+
+    /// <summary>
+    /// Builds a plan with only the items a finished import did not bring over (failed, not processed, or cancelled),
+    /// so a retry neither rescans the device nor counts files that are already at the destination. The device is not
+    /// touched: whether each item exists at the destination, the totals, and the free space are recomputed locally.
+    /// </summary>
+    public static PhoneImportPlan CreateRetryPlan(PhoneImportPlan previous, PhoneImportResult result)
+    {
+        ArgumentNullException.ThrowIfNull(previous);
+        ArgumentNullException.ThrowIfNull(result);
+        if (!string.Equals(previous.DestinationRoot, result.DestinationRoot, StringComparison.OrdinalIgnoreCase))
+            throw new ArgumentException("The result belongs to a different destination than the plan.", nameof(result));
+        var items = result.RetryItems
+            .Select(item => item with { AlreadyExists = File.Exists(Path.Combine(previous.DestinationRoot, item.RelativePath)) })
+            .ToList();
+        return BuildPlan(previous.Source, previous.SourceFolder, previous.SourceDisplayPath, previous.DestinationRoot,
+                items, previous.ScanFailures) with
+            {
+                ScannedFileCount = previous.ScannedFileCount ?? previous.FileCount
+            };
+    }
+
+    private static PhoneImportPlan BuildPlan(
+        IPortableDeviceSource source,
+        PortableDeviceEntry sourceFolder,
+        string sourceDisplayPath,
+        string destination,
+        IReadOnlyList<PhoneImportPlanItem> items,
+        IReadOnlyList<PhoneImportFailure> scanFailures) =>
+        new(
             source,
             sourceFolder,
             sourceDisplayPath,
@@ -106,7 +139,6 @@ public sealed class PhoneImportEngine(PhoneImportOptions? options = null)
             items.Count(item => item.Renamed),
             DestinationSpace.GetFreeBytes(destination),
             scanFailures);
-    }
 
     public async Task<PhoneImportResult> ImportAsync(
         PhoneImportPlan plan,
@@ -116,26 +148,31 @@ public sealed class PhoneImportEngine(PhoneImportOptions? options = null)
         ArgumentNullException.ThrowIfNull(plan);
         var elapsed = Stopwatch.StartNew();
         Directory.CreateDirectory(plan.DestinationRoot);
-        var tracker = new ProgressTracker(plan, progress, _options.ProgressInterval);
+        // Files the plan already found at the destination are counted and left alone; only the rest is worked on and
+        // counted in the progress, so a resumed or retried import does not appear to start from the beginning.
+        var toCopy = plan.Items.Where(item => !item.AlreadyExists).ToList();
+        var skipped = plan.Items.Count - toCopy.Count;
+        var tracker = new ProgressTracker(toCopy.Count,
+            toCopy.Sum(item => Math.Max(0, item.Entry.ReportedSize ?? 0)), skipped, progress, _options.ProgressInterval);
         var failures = new List<PhoneImportFailure>();
+        var retryItems = new List<PhoneImportPlanItem>();
         var sizeMismatches = new List<string>();
         var copied = 0;
-        var skipped = 0;
         var failed = 0;
-        var notProcessed = 0;
+        var notProcessedFrom = -1;
         var sizeMismatchCount = 0;
         var suggestKeepOriginals = false;
         long copiedBytes = 0;
         PhoneImportStatus? stopStatus = null;
         var buffer = new byte[Math.Max(4096, _options.BufferSize)];
 
-        for (var index = 0; index < plan.Items.Count; index++)
+        for (var index = 0; index < toCopy.Count; index++)
         {
-            var item = plan.Items[index];
+            var item = toCopy[index];
             if (cancellationToken.IsCancellationRequested)
             {
                 stopStatus = PhoneImportStatus.Cancelled;
-                notProcessed = plan.Items.Count - index;
+                notProcessedFrom = index;
                 break;
             }
 
@@ -171,13 +208,13 @@ public sealed class PhoneImportEngine(PhoneImportOptions? options = null)
                     break;
                 case ItemOutcomeKind.Cancelled:
                     stopStatus = PhoneImportStatus.Cancelled;
-                    notProcessed = plan.Items.Count - index;
+                    notProcessedFrom = index;
                     break;
                 default:
                     failed++;
                     var failure = outcome.Failure!;
-                    if (failures.Count < _options.MaxReportedFailures)
-                        failures.Add(failure);
+                    failures.Add(failure);
+                    retryItems.Add(item);
                     if (failure.Kind == PhoneImportErrorKind.DeviceNotFunctioning)
                         suggestKeepOriginals = true;
                     if (PhoneImportErrors.StopsImport(failure.Kind))
@@ -185,7 +222,7 @@ public sealed class PhoneImportEngine(PhoneImportOptions? options = null)
                         stopStatus = failure.Kind == PhoneImportErrorKind.DestinationFull
                             ? PhoneImportStatus.StoppedDestinationFull
                             : PhoneImportStatus.StoppedDeviceDisconnected;
-                        notProcessed = plan.Items.Count - index - 1;
+                        notProcessedFrom = index + 1;
                     }
                     break;
             }
@@ -194,6 +231,8 @@ public sealed class PhoneImportEngine(PhoneImportOptions? options = null)
                 break;
         }
 
+        var notProcessed = notProcessedFrom < 0 ? [] : toCopy.GetRange(notProcessedFrom, toCopy.Count - notProcessedFrom);
+        retryItems.AddRange(notProcessed);
         tracker.Report(force: true);
         var status = stopStatus ?? (failed > 0 ? PhoneImportStatus.CompletedWithErrors : PhoneImportStatus.Completed);
         return new PhoneImportResult(
@@ -204,14 +243,18 @@ public sealed class PhoneImportEngine(PhoneImportOptions? options = null)
             copied,
             skipped,
             failed,
-            notProcessed,
+            notProcessed.Count,
             copiedBytes,
             failures,
             sizeMismatchCount,
             sizeMismatches,
             plan.RenamedCount,
             suggestKeepOriginals,
-            elapsed.Elapsed);
+            elapsed.Elapsed)
+        {
+            RetryItems = retryItems,
+            NotProcessedPaths = notProcessed.Select(item => item.RelativePath).ToArray()
+        };
     }
 
     /// <summary>Returns the full destination path, or throws when it is not a usable local or network folder path.</summary>
@@ -434,7 +477,9 @@ public sealed class PhoneImportEngine(PhoneImportOptions? options = null)
     private sealed record ItemOutcome(ItemOutcomeKind Kind, long Bytes, PhoneImportFailure? Failure, bool BufferAbandoned);
 
     private sealed class ProgressTracker(
-        PhoneImportPlan plan,
+        int totalFiles,
+        long totalBytes,
+        int initialSkipped,
         IProgress<PhoneImportProgress>? progress,
         TimeSpan interval)
     {
@@ -447,7 +492,7 @@ public sealed class PhoneImportEngine(PhoneImportOptions? options = null)
         private long? _currentReported;
         private string? _currentItem;
         private int _copied;
-        private int _skipped;
+        private int _skipped = initialSkipped;
         private int _failed;
 
         public void BeginItem(PhoneImportPlanItem item)
@@ -482,13 +527,13 @@ public sealed class PhoneImportEngine(PhoneImportOptions? options = null)
                 return;
             var current = _currentReported is { } reported ? Math.Min(_currentBytes, Math.Max(0, reported)) : _currentBytes;
             var processedBytes = _finishedBytes + current;
-            if (plan.ReportedTotalBytes > 0)
-                processedBytes = Math.Min(processedBytes, plan.ReportedTotalBytes);
+            if (totalBytes > 0)
+                processedBytes = Math.Min(processedBytes, totalBytes);
             progress.Report(new PhoneImportProgress(
                 _processed,
-                plan.Items.Count,
+                totalFiles,
                 processedBytes,
-                plan.ReportedTotalBytes,
+                totalBytes,
                 _copiedBytes + _currentBytes,
                 force ? null : _currentItem,
                 _copied,

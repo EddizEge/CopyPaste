@@ -84,7 +84,10 @@ public sealed class PhoneImportDiagnostics
 
         if (LastPlan is { } plan)
         {
-            text.AppendLine($"{T("Son tarama", "Last scan")} [{plan.Source.BackendName}]: {plan.SourceDisplayPath} → {plan.DestinationRoot}");
+            text.AppendLine($"{T("Son tarama", "Last scan")} [{plan.Source.BackendName}]: {plan.SourceDisplayPath} → {plan.DestinationRoot}"
+                            + (plan.ScannedFileCount is { } scanned
+                                ? " — " + T($"yeniden deneme planı (ilk tarama {scanned} dosya)", $"retry plan (first scan {scanned} files)")
+                                : string.Empty));
             text.AppendLine($"  {T("dosya", "files")} {plan.FileCount}, {T("bildirilen", "reported")} {FormatBytes(plan.ReportedTotalBytes)}, "
                             + $"{T("boyutu bilinmeyen", "unknown size")} {plan.UnknownSizeCount}, {T("zaten var", "already present")} {plan.ExistingCount}, "
                             + $"{T("yeniden adlandırılan", "renamed")} {plan.RenamedCount}, {T("boş alan", "free space")} "
@@ -97,9 +100,13 @@ public sealed class PhoneImportDiagnostics
                             + $"{T("aktarılan", "copied")} {result.CopiedCount}, {T("atlanan (zaten var)", "skipped (already present)")} {result.SkippedExistingCount}, "
                             + $"{T("başarısız", "failed")} {result.FailedCount}, {T("işlenmeyen", "not processed")} {result.NotProcessedCount}, "
                             + $"{FormatBytes(result.CopiedBytes)}, {result.Elapsed.TotalSeconds.ToString("N0", culture)} s, "
-                            + $"{T("boyutu farklı", "size differs")} {result.SizeMismatchCount}");
-            foreach (var failure in result.Failures)
+                            + $"{T("boyutu farklı", "size differs")} {result.SizeMismatchCount}, "
+                            + $"{T("yeniden denenecek", "to retry")} {result.RetryItems.Count}");
+            foreach (var failure in result.Failures.Take(MaxErrors))
                 text.AppendLine($"  ✗ {failure.RelativePath} — {PhoneImportErrors.FormatHResult(failure.HResult)} {failure.Kind} — {OneLine(failure.Message)}");
+            if (result.Failures.Count > MaxErrors)
+                text.AppendLine("  " + T($"…ve {result.Failures.Count - MaxErrors} başarısız dosya daha (tam liste: “Listeyi kaydet”)",
+                    $"…and {result.Failures.Count - MaxErrors} more failed files (full list: “Save list”)"));
         }
 
         text.AppendLine();

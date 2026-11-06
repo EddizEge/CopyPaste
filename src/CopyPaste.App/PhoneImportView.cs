@@ -28,6 +28,7 @@ public sealed class PhoneImportView : UserControl, IDisposable
 {
     private const double WideLayoutWidth = 900;
     private const double NarrowButtonsWidth = 640;
+    private const int MaxShownFailures = 20;
 
     private readonly bool _english;
     private readonly CultureInfo _culture;
@@ -71,6 +72,7 @@ public sealed class PhoneImportView : UserControl, IDisposable
     private readonly StackPanel _resultButtons = new() { Orientation = Orientation.Horizontal, Spacing = 8 };
     private readonly Button _openDestinationButton = new() { Visibility = Visibility.Collapsed };
     private readonly Button _retryButton = new() { Visibility = Visibility.Collapsed };
+    private readonly Button _saveListButton = new() { Visibility = Visibility.Collapsed };
     private readonly Button _copyDiagnosticsButton = new();
     private readonly TextBlock _diagnosticsStatus = Muted();
 
@@ -80,7 +82,12 @@ public sealed class PhoneImportView : UserControl, IDisposable
     private PortableDeviceInfo? _activeDevice;
     private List<PortableDeviceEntry> _path = [];
     private PhoneImportPlan? _plan;
+    // The plan the last import ran with and the device session it ran in; "Retry" reuses them to fetch only the
+    // missing files without scanning the phone again.
+    private PhoneImportPlan? _lastPlan;
     private PhoneImportResult? _lastResult;
+    private int _deviceSession;
+    private int _lastImportSession = -1;
     private CancellationTokenSource? _operation;
     private CancellationTokenSource? _deviceOperation;
     private bool _busy;
@@ -376,9 +383,15 @@ public sealed class PhoneImportView : UserControl, IDisposable
         _retryButton.Content = T("Yeniden dene", "Retry");
         _retryButton.Style = GetStyle("QuietButtonStyle");
         ToolTipService.SetToolTip(_retryButton, T(
-            "Klasörü yeniden tarar ve aktarır; hedefte zaten var olan dosyalar atlanır.",
-            "Scans the folder again and imports it; files already at the destination are skipped."));
+            "Yalnız aktarılamayan ve işlenmeyen dosyaları yeniden dener; telefon yeniden taranmaz. Telefon yeniden bağlandıysa ya da her şey aktarıldıysa klasörü yeniden tarar; hedefte zaten var olan dosyalar atlanır.",
+            "Retries only the files that weren't copied or processed, without scanning the phone again. If the phone was reconnected or everything was copied, it scans the folder again; files already at the destination are skipped."));
         _retryButton.Click += async (_, _) => await RetryAsync();
+        _saveListButton.Content = T("Listeyi kaydet (.txt)", "Save list (.txt)");
+        _saveListButton.Style = GetStyle("QuietButtonStyle");
+        ToolTipService.SetToolTip(_saveListButton, T(
+            "Aktarılamayan ve işlenmeyen dosyaların tam listesini sebepleriyle bir metin dosyasına kaydeder.",
+            "Saves the full list of files that weren't copied or processed, with the reasons, to a text file."));
+        _saveListButton.Click += SaveList_Click;
         _copyDiagnosticsButton.Content = T("Tanılama bilgisini kopyala", "Copy diagnostic information");
         _copyDiagnosticsButton.Style = GetStyle("QuietButtonStyle");
         ToolTipService.SetToolTip(_copyDiagnosticsButton, T(
@@ -387,6 +400,7 @@ public sealed class PhoneImportView : UserControl, IDisposable
         _copyDiagnosticsButton.Click += (_, _) => CopyDiagnostics();
         _resultButtons.Children.Add(_openDestinationButton);
         _resultButtons.Children.Add(_retryButton);
+        _resultButtons.Children.Add(_saveListButton);
         _resultButtons.Children.Add(_copyDiagnosticsButton);
         AutomationProperties.SetLiveSetting(_diagnosticsStatus, AutomationLiveSetting.Polite);
 
@@ -422,6 +436,7 @@ public sealed class PhoneImportView : UserControl, IDisposable
         if (_busy || _disposed)
             return;
         var token = RestartDeviceOperation();
+        _deviceSession++;
         SetDeviceLoading(true, T("Bağlı telefonlar aranıyor…", "Looking for connected phones…"));
         HideNotice(_guidanceBox);
         _suppressDeviceSelection = true;
@@ -490,6 +505,7 @@ public sealed class PhoneImportView : UserControl, IDisposable
         if (_busy || _disposed)
             return;
         var token = RestartDeviceOperation();
+        _deviceSession++;
         SetDeviceLoading(true, T("Telefon açılıyor…", "Opening the phone…"));
         HideNotice(_guidanceBox);
         ClearFolderView();
@@ -665,10 +681,88 @@ public sealed class PhoneImportView : UserControl, IDisposable
     {
         if (_busy)
             return;
-        var plan = await ScanAsync();
-        if (plan is { FileCount: > 0 })
-            await ImportAsync(plan);
+        var retryPlan = await CreateRetryPlanAsync();
+        if (retryPlan is not null)
+            await ImportAsync(retryPlan);
+        else
+        {
+            var plan = await ScanAsync();
+            if (plan is { FileCount: > 0 })
+                await ImportAsync(plan);
+        }
         UpdateActionButtons();
+    }
+
+    // Returns a plan with only the missing files of the last import, or null when the folder has to be scanned again:
+    // nothing is left to retry, the phone was refreshed or reopened since (its handles may be stale), the connection
+    // was lost, or the folder or destination changed.
+    private async Task<PhoneImportPlan?> CreateRetryPlanAsync()
+    {
+        if (_lastResult is not { RetryItems.Count: > 0 } result
+            || result.Status == PhoneImportStatus.StoppedDeviceDisconnected
+            || _lastPlan is not { } previous
+            || _activeDevice is not { } device
+            || _path.Count == 0
+            || _lastImportSession != _deviceSession
+            || !ReferenceEquals(previous.Source, device.Source)
+            || !ReferenceEquals(previous.SourceFolder, _path[^1])
+            || !string.Equals(previous.DestinationRoot, result.DestinationRoot, StringComparison.OrdinalIgnoreCase))
+            return null;
+        string destination;
+        try
+        {
+            destination = PhoneImportEngine.NormalizeDestination(_destinationBox.Text);
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            return null;
+        }
+        if (!string.Equals(destination, previous.DestinationRoot, StringComparison.OrdinalIgnoreCase))
+            return null;
+
+        SetBusy(true);
+        try
+        {
+            // Checks each destination file and the free space; kept off the UI thread for slow or network drives.
+            var plan = await Task.Run(() => PhoneImportEngine.CreateRetryPlan(previous, result));
+            _diagnostics.LastPlan = plan;
+            ShowRetrySummary(plan);
+            return plan;
+        }
+        catch (Exception ex)
+        {
+            _diagnostics.RecordError(T("yeniden deneme planı", "retry plan"), ex);
+            return null;
+        }
+        finally
+        {
+            SetBusy(false);
+        }
+    }
+
+    private void ShowRetrySummary(PhoneImportPlan plan)
+    {
+        var scanned = plan.ScannedFileCount ?? plan.FileCount;
+        var done = Math.Max(0, scanned - plan.FilesToCopy);
+        var lines = new List<string>
+        {
+            T($"Yalnız eksik {N(plan.FilesToCopy)} dosya yeniden deneniyor ({N(done)} dosya zaten aktarılmış); telefon yeniden taranmıyor.",
+                $"Retrying only the {N(plan.FilesToCopy)} missing file(s) ({N(done)} already copied); the phone isn't scanned again."),
+            T($"Kaynak: {plan.SourceDisplayPath}", $"Source: {plan.SourceDisplayPath}"),
+            T($"Hedef: {plan.DestinationRoot}", $"Destination: {plan.DestinationRoot}"),
+            T("Telefona yeni eklenen dosyalar için “Özeti hazırla”ya basın.",
+                "To include files added to the phone since, select “Prepare summary”.")
+        };
+        _summaryText.Text = string.Join("\n", lines);
+        HideNotice(_summaryWarning);
+        if (!plan.HasEnoughSpace)
+        {
+            var free = plan.FreeBytes is { } bytes ? FormatBytes(bytes) : T("bilinmiyor", "unknown");
+            ShowNotice(_summaryWarning, _summaryWarningText, NoticeKind.Warning, T(
+                $"Hedefte yeterli boş alan görünmüyor: yaklaşık {FormatBytes(plan.ReportedBytesToCopy)} gerekli, {free} boş. Yer biterse aktarma durur ve yarım dosya bırakmaz.",
+                $"The destination doesn't appear to have enough free space: about {FormatBytes(plan.ReportedBytesToCopy)} is needed and {free} is free. If space runs out, the import stops without leaving a partial file."));
+        }
+        Announce(_summaryText);
     }
 
     private async Task ImportAsync(PhoneImportPlan plan)
@@ -680,16 +774,23 @@ public sealed class PhoneImportView : UserControl, IDisposable
         _failureText.Visibility = Visibility.Collapsed;
         _progressBar.Value = 0;
         _progressBar.Visibility = Visibility.Visible;
-        _progressText.Text = T("Aktarma başlıyor…", "Starting the import…");
-        var progress = new Progress<PhoneImportProgress>(value => UpdateProgress(plan, value));
+        _progressText.Text = plan.IsRetry
+            ? T("Yeniden deneme başlıyor: yalnız eksik dosyalar…", "Starting the retry: only the missing files…")
+            : T("Aktarma başlıyor…", "Starting the import…");
+        // The progress counts only the files to copy; their sizes decide whether it can go by bytes.
+        var byBytes = plan.Items.All(item => item.AlreadyExists || item.Entry.ReportedSize is not null);
+        var progress = new Progress<PhoneImportProgress>(value => UpdateProgress(plan, byBytes, value));
+        var session = _deviceSession;
         try
         {
             var result = await Task.Run(() => _engine.ImportAsync(plan, progress, token), CancellationToken.None);
             _lastResult = result;
+            _lastPlan = plan;
+            _lastImportSession = session;
             _diagnostics.LastResult = result;
             foreach (var failure in result.Failures.Take(5))
                 _diagnostics.RecordError($"{result.BackendName} {failure.RelativePath}", failure.HResult, failure.Message);
-            ShowResult(result);
+            ShowResult(plan, result);
         }
         catch (Exception ex)
         {
@@ -701,21 +802,23 @@ public sealed class PhoneImportView : UserControl, IDisposable
         finally
         {
             EndOperation();
-            // The destination changed; a new start needs a fresh summary (or "Retry", which scans first).
+            // The destination changed; a new start needs a fresh summary (or "Retry", which takes the missing files).
             InvalidatePlan();
             _progressBar.Visibility = Visibility.Collapsed;
         }
     }
 
-    private void UpdateProgress(PhoneImportPlan plan, PhoneImportProgress value)
+    private void UpdateProgress(PhoneImportPlan plan, bool knownSizes, PhoneImportProgress value)
     {
-        var byBytes = value.TotalBytes > 0 && plan.UnknownSizeCount == 0;
+        var byBytes = value.TotalBytes > 0 && knownSizes;
         _progressBar.Value = byBytes
             ? Math.Clamp(value.ProcessedBytes / (double)value.TotalBytes, 0, 1)
             : Math.Clamp(value.ProcessedFiles / (double)Math.Max(1, value.TotalFiles), 0, 1);
         var line = T(
             $"{N(value.ProcessedFiles)}/{N(value.TotalFiles)} dosya • {FormatBytes(value.ProcessedBytes)} / {FormatBytes(value.TotalBytes)}",
             $"{N(value.ProcessedFiles)}/{N(value.TotalFiles)} files • {FormatBytes(value.ProcessedBytes)} / {FormatBytes(value.TotalBytes)}");
+        if (plan.IsRetry)
+            line = T("Yeniden deneme (yalnız eksikler) • ", "Retry (missing files only) • ") + line;
         if (value.CurrentItem is { } current)
             line += "\n" + T("Şu an: ", "Now: ") + current;
         line += "\n" + T(
@@ -770,7 +873,7 @@ public sealed class PhoneImportView : UserControl, IDisposable
         Announce(_summaryText);
     }
 
-    private void ShowResult(PhoneImportResult result)
+    private void ShowResult(PhoneImportPlan plan, PhoneImportResult result)
     {
         var counts = T(
             $"{N(result.CopiedCount)} dosya aktarıldı ({FormatBytes(result.CopiedBytes)}), {N(result.SkippedExistingCount)} dosya zaten vardı, {N(result.FailedCount)} başarısız, {N(result.NotProcessedCount)} işlenmedi.",
@@ -808,18 +911,30 @@ public sealed class PhoneImportView : UserControl, IDisposable
         if (result.RenamedCount > 0)
             details.Add(T($"{N(result.RenamedCount)} dosya Windows'ta geçersiz ya da çakışan adı yüzünden güvenli bir adla kaydedildi.",
                 $"{N(result.RenamedCount)} file(s) were saved under a safe name because their name was invalid or collided in Windows."));
+        if (plan.IsRetry)
+            details.Add(T($"Yeniden deneme: ilk taramadaki {N(plan.ScannedFileCount ?? plan.FileCount)} dosyadan yalnız eksik {N(plan.FileCount)} dosya denendi.",
+                $"Retry: only the {N(plan.FileCount)} missing file(s) of the {N(plan.ScannedFileCount ?? plan.FileCount)} in the first scan were tried."));
+        if (plan.IsRetry && result.CopiedCount == 0 && result.FailedCount > 0)
+            details.Add(T("Hiçbir dosya alınamadı. Telefonu çıkarıp taktıysanız “Yenile”ye basın; sonraki “Yeniden dene” klasörü baştan tarar.",
+                "No file could be copied. If you reconnected the phone, select “Refresh”; the next “Retry” scans the folder again."));
         if (result.SuggestKeepOriginals)
             details.Add(PhoneImportErrors.KeepOriginalsHint(_english));
         ShowNotice(_resultBox, _resultText, kind, headline + "\n" + string.Join("\n", details));
 
         if (result.Failures.Count > 0)
         {
-            var lines = result.Failures.Select(failure =>
+            var shown = result.Failures.Take(MaxShownFailures).ToArray();
+            var lines = shown.Select(failure =>
                 $"• {failure.RelativePath} — {PhoneImportErrors.Describe(failure.Kind, _english)} ({PhoneImportErrors.FormatHResult(failure.HResult)})");
-            var more = result.FailedCount - result.Failures.Count;
-            _failureText.Text = T($"Başarısız dosyalar (ilk {N(result.Failures.Count)}):", $"Failed files (first {N(result.Failures.Count)}):")
+            var more = result.FailedCount - shown.Length;
+            _failureText.Text = (more > 0
+                                    ? T($"Başarısız dosyalar (ilk {N(shown.Length)}):", $"Failed files (first {N(shown.Length)}):")
+                                    : T("Başarısız dosyalar:", "Failed files:"))
                                 + "\n" + string.Join("\n", lines)
-                                + (more > 0 ? "\n" + T($"…ve {N(more)} dosya daha", $"…and {N(more)} more") : string.Empty);
+                                + (more > 0
+                                    ? "\n" + T($"…ve {N(more)} dosya daha — tam liste için “Listeyi kaydet”",
+                                        $"…and {N(more)} more — select “Save list” for the full list")
+                                    : string.Empty);
             _failureText.Visibility = Visibility.Visible;
         }
         _progressText.Text = string.Empty;
@@ -881,6 +996,48 @@ public sealed class PhoneImportView : UserControl, IDisposable
         {
             _summaryText.Text = T("Windows klasör seçicisi açılamadı. Tam yolu kutuya yazabilir veya yapıştırabilirsiniz.",
                 "The Windows folder picker couldn't open. Type or paste the full path in the box.");
+        }
+    }
+
+    private async void SaveList_Click(object sender, RoutedEventArgs e)
+    {
+        if (_lastResult is not { } result)
+            return;
+        var plan = _lastPlan;
+        _saveListButton.IsEnabled = false;
+        try
+        {
+            var picker = new FileSavePicker
+            {
+                SuggestedStartLocation = PickerLocationId.DocumentsLibrary,
+                SuggestedFileName = PhoneImportReport.SuggestedFileName(_english, DateTime.Now)
+            };
+            picker.FileTypeChoices.Add(T("Metin dosyası", "Text file"), [".txt"]);
+            InitializeWithWindow.Initialize(picker, WindowNative.GetWindowHandle(_owner));
+            var file = await picker.PickSaveFileAsync();
+            if (file is null)
+                return;
+            // Only a folder on this PC: a location on the phone comes back without a file-system path and is never written.
+            if (TransferPathClassifier.Classify(file.Path) != TransferPathKind.FileSystem)
+            {
+                _diagnosticsStatus.Text = T("Liste kaydedilmedi: bu bilgisayardaki ya da harici bir sürücüdeki bir klasör seçin; telefona hiçbir şey yazılmaz.",
+                    "The list wasn't saved: choose a folder on this PC or on an external drive; nothing is written to the phone.");
+                return;
+            }
+            var text = PhoneImportReport.Build(plan, result, _english,
+                Assembly.GetExecutingAssembly().GetName().Version?.ToString() ?? "?", DateTimeOffset.Now,
+                BackendLabel(result.BackendName));
+            await FileIO.WriteBytesAsync(file, PhoneImportReport.Encode(text));
+            _diagnosticsStatus.Text = T($"Liste kaydedildi: {file.Path}", $"List saved: {file.Path}");
+        }
+        catch (Exception ex)
+        {
+            _diagnosticsStatus.Text = T("Liste kaydedilemedi: ", "The list couldn't be saved: ") + ex.Message;
+        }
+        finally
+        {
+            _saveListButton.IsEnabled = true;
+            Announce(_diagnosticsStatus);
         }
     }
 
@@ -1021,6 +1178,9 @@ public sealed class PhoneImportView : UserControl, IDisposable
             : T("Aktarmayı başlat", "Start import");
         _retryButton.Visibility = _lastResult is null ? Visibility.Collapsed : Visibility.Visible;
         _retryButton.IsEnabled = idle && hasFolder;
+        _saveListButton.Visibility = _lastResult is { } last && PhoneImportReport.HasEntries(_lastPlan, last)
+            ? Visibility.Visible
+            : Visibility.Collapsed;
         _openDestinationButton.Visibility = _lastResult is not null && Directory.Exists(_lastResult.DestinationRoot)
             ? Visibility.Visible
             : Visibility.Collapsed;

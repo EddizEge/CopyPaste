@@ -96,6 +96,13 @@ public sealed record PhoneImportPlan(
     long? FreeBytes,
     IReadOnlyList<PhoneImportFailure> ScanFailures)
 {
+    /// <summary>
+    /// Set on a plan built by <see cref="PhoneImportEngine.CreateRetryPlan"/>: the file count of the scan the retry
+    /// chain started from. Null for a plan that came from a scan.
+    /// </summary>
+    public int? ScannedFileCount { get; init; }
+
+    public bool IsRetry => ScannedFileCount is not null;
     public int FileCount => Items.Count;
     public int FilesToCopy => Items.Count - ExistingCount;
     public bool HasEnoughSpace => FreeBytes is not { } free || free >= ReportedBytesToCopy;
@@ -138,4 +145,11 @@ public sealed record PhoneImportResult(
     IReadOnlyList<string> SizeMismatches,
     int RenamedCount,
     bool SuggestKeepOriginals,
-    TimeSpan Elapsed);
+    TimeSpan Elapsed)
+{
+    /// <summary>Plan items that failed or were not processed, in plan order; a retry takes only these.</summary>
+    public IReadOnlyList<PhoneImportPlanItem> RetryItems { get; init; } = [];
+
+    /// <summary>Relative paths of the items that were not processed (cancellation or a stop), in plan order.</summary>
+    public IReadOnlyList<string> NotProcessedPaths { get; init; } = [];
+}

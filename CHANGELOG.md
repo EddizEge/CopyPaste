@@ -1,5 +1,11 @@
 # Değişiklik günlüğü
 
+## 1.7.7 — geliştirme aşamasında
+
+- Telefondan aktar: “Yeniden dene” artık telefonu baştan taramıyor; son aktarmada başarısız olan, işlenmeyen veya iptalde kalan dosyalar için yeni bir plan kurup yalnız onları deniyor (“Yalnız eksik N dosya yeniden deneniyor, M dosya zaten aktarılmış”). Her dosyanın hedefte olup olmadığı ve boş alan yeniden kontrol ediliyor; telefon “Yenile” ile yeniden açıldıysa, bağlantı koptuysa, klasör veya hedef değiştiyse ya da yeniden denenecek dosya kalmadıysa klasör eskisi gibi taranıyor. Telefona yeni eklenen dosyalar için “Özeti hazırla” kullanılıyor.
+- Telefondan aktar: hedefte zaten var olan dosyalar artık aktarma döngüsüne alınmıyor, doğrudan “zaten var” sayılıyor; ilerleme çubuğu ve dosya/bayt toplamları yalnız kopyalanacak dosyaları sayıyor. Yarıda kalmış bir aktarmayı yeniden başlatmak artık en baştan başlıyormuş gibi görünmüyor.
+- Telefondan aktar: başarısız dosyaların hepsi sonuçta tutuluyor (önceden ilk 20'si). Sonuç ekranı yine ilk 20'yi gösteriyor ve kalan sayıyı belirtiyor; yeni “Listeyi kaydet (.txt)” düğmesi başarısız dosyaların tam listesini (göreli yol, sebep, HRESULT, mesaj; sekmeyle ayrılmış), işlenmeyen dosyaları ve okunamayan alt klasörleri tarih, uygulama sürümü, kaynak, hedef, erişim yolu, durum ve sayılarla UTF-8 (BOM'lu) bir metin dosyasına kaydediyor. Dosyaya aygıt kimliği veya seri numarası yazılmıyor. Tanılama metni yeniden denenecek dosya sayısını da gösteriyor.
+
 ## 1.7.6
 
 - Düzeltme: 1.7.5 Setup ve portable ZIP paketlerinde uygulamanın kaynak dizini (`CopyPaste.App.pri`) ve derlenmiş XAML dosyaları (`App.xbf`, `MainWindow.xbf`) eksikti; ana pencere yüklenemiyor ve uygulama açılışta kapanıyordu. 1.7.5'te paketleme `dotnet publish` çıktısına geçmişti ve paketlenmemiş WinUI yayını bu dosyaları yayın klasörüne koymuyor. Paketleme artık bu dosyaları aynı yayın derlemesinin çıktısından pakete ekliyor; paket smoke testi ana pencerenin XAML'ını da yüklüyor ve dosyalar eksikse yayın oluşturulmuyor. 1.7.5 kuruluysa ve açılmıyorsa uygulama içi güncelleyici çalışamaz: 1.7.6 Setup'ı veya portable ZIP'i GitHub'dan indirilmelidir. GitHub'daki v1.7.5 sürümü 19 Ekim 2026'da ön sürüm olarak işaretlendi; böylece 1.7.0 kullanıcılarına güncelleme olarak sunulmuyor.

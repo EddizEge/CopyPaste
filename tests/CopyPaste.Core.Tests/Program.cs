@@ -18,8 +18,8 @@ Assert(RobocopyRunner.CreateResult(16).Status == CopyJobStatus.Failed,
     "Exit 16 ciddi hata olarak başarısız olmalı");
 Assert(!new RobocopyResult(-1, CopyJobStatus.Cancelled, "iptal").IsSuccessful,
     "İptal sonucu başarılı sayılmamalı");
-Assert(ReleaseNotesCatalog.All is [{ Version: "1.7.6", IsPreview: false }, { Version: "1.7.5", IsPreview: false },
-           { Version: "1.7.0", IsPreview: false }, ..]
+Assert(ReleaseNotesCatalog.All is [{ Version: "1.7.7", IsPreview: true }, { Version: "1.7.6", IsPreview: false },
+           { Version: "1.7.5", IsPreview: false }, { Version: "1.7.0", IsPreview: false }, ..]
        && ReleaseNotesCatalog.All.Select(note => note.Version).Distinct(StringComparer.OrdinalIgnoreCase).Count()
           == ReleaseNotesCatalog.All.Count
        && ReleaseNotesCatalog.All.All(note => note.TurkishChanges.Count > 0
@@ -1920,6 +1920,259 @@ try
     }
     Assert((File.GetAttributes(readOnlySourceFile) & FileAttributes.ReadOnly) != 0,
         "Kaynak değişmezliği: salt okunur öznitelik korunmalı");
+
+    // 16) Yeniden dene yalnız eksikleri alır; başarısızların hepsi sonuçta; aktarılamayanlar listesi (.txt).
+    bool CountsAddUp(PhoneImportResult value) =>
+        value.CopiedCount + value.SkippedExistingCount + value.FailedCount + value.NotProcessedCount == value.TotalCount;
+    COMException NotFunctioning() => new("A device attached to the system is not functioning.",
+        PhoneImportErrors.DeviceNotFunctioningHResult);
+
+    // (i) 30 başarısız dosyanın hepsi sonuçta (eskiden ilk 20).
+    var manyFailNodes = Enumerable.Range(1, 30)
+        .Select(number => FakeDeviceNode.File($"BOZUK_{number:000}.HEIC", [(byte)number]))
+        .ToArray();
+    foreach (var node in manyFailNodes)
+        node.OnOpen = () => throw NotFunctioning();
+    var manyTree = FakeDeviceNode.Folder("Apple iPhone", FakeDeviceNode.Folder("Internal Storage", FakeDeviceNode.Folder("DCIM",
+        [FakeDeviceNode.Folder("100APPLE", [.. manyFailNodes, FakeDeviceNode.File("SAĞLAM.JPG", jpgBytes)])])));
+    var (manySource, manyDcim) = await OpenFakeAsync(manyTree);
+    var manyDestination = Path.Combine(phoneTestRoot, "hedef-çok-hata");
+    var manyPlan = await phoneEngine.PlanAsync(manySource, manyDcim, "Apple iPhone › DCIM", manyDestination, null,
+        CancellationToken.None);
+    var manyResult = await phoneEngine.ImportAsync(manyPlan, null, CancellationToken.None);
+    Assert(manyResult is { Status: PhoneImportStatus.CompletedWithErrors, CopiedCount: 1, FailedCount: 30, NotProcessedCount: 0, TotalCount: 31 }
+           && manyResult.Failures.Count == 30
+           && manyResult.RetryItems.Count == 30 && manyResult.NotProcessedPaths.Count == 0
+           && manyResult.RetryItems.Select(item => item.RelativePath).SequenceEqual(manyResult.Failures.Select(failure => failure.RelativePath))
+           && CountsAddUp(manyResult),
+        $"Yeniden dene: 30 başarısız dosyanın hepsi sonuçta ve yeniden deneme listesinde olmalı (Failures {manyResult.Failures.Count}, RetryItems {manyResult.RetryItems.Count})");
+
+    // (ii) Planda zaten var olan dosyalar döngüye girmez, ilerleme toplamına sayılmaz; "zaten var" sayısı doğru.
+    var presentTree = BuildIphone();
+    var presentOpens = 0;
+    presentTree.Find("IMG_0001.HEIC")!.OnOpen = () => presentOpens++;
+    presentTree.Find("IMG_0002.JPG")!.OnOpen = () => presentOpens++;
+    var (presentSource, presentDcim) = await OpenFakeAsync(presentTree);
+    var presentDestination = Path.Combine(phoneTestRoot, "hedef-zaten-var");
+    Directory.CreateDirectory(Path.Combine(presentDestination, "100APPLE"));
+    await File.WriteAllTextAsync(Path.Combine(presentDestination, "100APPLE", "IMG_0001.HEIC"), "VAR 1");
+    await File.WriteAllTextAsync(Path.Combine(presentDestination, "100APPLE", "IMG_0002.JPG"), "VAR 2");
+    var presentPlan = await phoneEngine.PlanAsync(presentSource, presentDcim, "DCIM", presentDestination, null, CancellationToken.None);
+    var presentProgress = new List<PhoneImportProgress>();
+    var presentResult = await phoneEngine.ImportAsync(presentPlan,
+        new InlineProgress<PhoneImportProgress>(presentProgress.Add), CancellationToken.None);
+    Assert(presentPlan is { FileCount: 3, ExistingCount: 2, FilesToCopy: 1 }
+           && presentResult is { Status: PhoneImportStatus.Completed, TotalCount: 3, CopiedCount: 1, SkippedExistingCount: 2, FailedCount: 0 }
+           && presentOpens == 0
+           && presentProgress.Count > 0
+           && presentProgress.All(value => value.TotalFiles == 1 && value.TotalBytes == movBytes.Length && value.SkippedFiles == 2)
+           && presentProgress[^1] is { ProcessedFiles: 1, CopiedFiles: 1 }
+           && presentProgress[^1].ProcessedBytes == movBytes.Length
+           && File.ReadAllText(Path.Combine(presentDestination, "100APPLE", "IMG_0001.HEIC")) == "VAR 1"
+           && File.ReadAllText(Path.Combine(presentDestination, "100APPLE", "IMG_0002.JPG")) == "VAR 2"
+           && CountsAddUp(presentResult),
+        "Yeniden dene: planda var olan dosyalar açılmamalı, ilerleme yalnız kopyalanacakları saymalı, “zaten var” doğru olmalı ("
+        + string.Join(", ", presentProgress.Take(3).Select(value => $"{value.ProcessedFiles}/{value.TotalFiles} {value.ProcessedBytes}/{value.TotalBytes} atlanan {value.SkippedFiles}"))
+        + $", açılış {presentOpens})");
+
+    // (iii) CreateRetryPlan: yalnız başarısız + işlenmeyen, varlık yeniden kontrol, toplamlar yeniden hesaplanır; kaynak
+    // düzelince kalanlar kopyalanır, hedefteki dosyalara (içerik, tarih) dokunulmaz, aktarılmış dosyalar telefondan okunmaz.
+    var retryBytes = Enumerable.Range(0, 5).Select(index => RandomNumberGenerator.GetBytes(10_000 + index * 1_000)).ToArray();
+    var retryNames = new[] { "A.JPG", "B.HEIC", "C.JPG", "D.MOV", "E.JPG" };
+    var retryNodes = retryNames.Select((name, index) => FakeDeviceNode.File(name, retryBytes[index])).ToArray();
+    var retryOpens = new int[5];
+    for (var index = 0; index < retryNodes.Length; index++)
+    {
+        var captured = index;
+        retryNodes[index].OnOpen = () =>
+        {
+            retryOpens[captured]++;
+            if (captured is 1 or 3)
+                throw NotFunctioning();
+        };
+    }
+    var retryTree = FakeDeviceNode.Folder("Apple iPhone", FakeDeviceNode.Folder("Internal Storage",
+        FakeDeviceNode.Folder("DCIM", FakeDeviceNode.Folder("100APPLE", retryNodes))));
+    var (retrySource, retryDcim) = await OpenFakeAsync(retryTree);
+    var retryDestination = Path.Combine(phoneTestRoot, "hedef-yeniden-dene");
+    var retryFirstPlan = await phoneEngine.PlanAsync(retrySource, retryDcim, "Apple iPhone › DCIM", retryDestination, null,
+        CancellationToken.None);
+    var retryFirst = await phoneEngine.ImportAsync(retryFirstPlan, null, CancellationToken.None);
+    string RetryPath(string name) => Path.Combine(retryDestination, "100APPLE", name);
+    var retryPlan = PhoneImportEngine.CreateRetryPlan(retryFirstPlan, retryFirst);
+    Assert(retryFirst is { Status: PhoneImportStatus.CompletedWithErrors, CopiedCount: 3, FailedCount: 2 }
+           && retryPlan.Items.Select(item => Path.GetFileName(item.RelativePath)).SequenceEqual(["B.HEIC", "D.MOV"])
+           && retryPlan is { IsRetry: true, ScannedFileCount: 5, FileCount: 2, ExistingCount: 0, UnknownSizeCount: 0 }
+           && retryPlan.ReportedTotalBytes == retryBytes[1].Length + retryBytes[3].Length
+           && retryPlan.ReportedBytesToCopy == retryPlan.ReportedTotalBytes
+           && retryPlan.FreeBytes is > 0
+           && ReferenceEquals(retryPlan.Source, retryFirstPlan.Source)
+           && ReferenceEquals(retryPlan.SourceFolder, retryFirstPlan.SourceFolder)
+           && retryPlan.DestinationRoot == retryFirstPlan.DestinationRoot
+           && !retryFirstPlan.IsRetry,
+        "Yeniden dene: yeniden deneme planı yalnız başarısız dosyaları almalı ve toplamları yeniden hesaplamalı");
+    // Kullanıcı D'yi elle koydu: varlık yeniden kontrol edilmeli.
+    await File.WriteAllTextAsync(RetryPath("D.MOV"), "ELLE KONDU");
+    var retryPlanWithManual = PhoneImportEngine.CreateRetryPlan(retryFirstPlan, retryFirst);
+    Assert(retryPlanWithManual is { FileCount: 2, ExistingCount: 1, FilesToCopy: 1 }
+           && retryPlanWithManual.ReportedBytesToCopy == retryBytes[1].Length
+           && retryPlanWithManual.Items.Single(item => item.AlreadyExists).RelativePath.EndsWith("D.MOV", StringComparison.Ordinal),
+        "Yeniden dene: yeniden deneme planı hedefte sonradan beliren dosyayı “zaten var” saymalı");
+    var untouchedBefore = new[] { "A.JPG", "C.JPG", "E.JPG", "D.MOV" }
+        .ToDictionary(name => name, name => (Hash: Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(RetryPath(name)))),
+            Written: File.GetLastWriteTimeUtc(RetryPath(name)), Created: File.GetCreationTimeUtc(RetryPath(name))));
+    // Kaynak düzeldi (ör. "Orijinalleri Koru" seçildi).
+    Array.Clear(retryOpens);
+    for (var index = 0; index < retryNodes.Length; index++)
+    {
+        var captured = index;
+        retryNodes[index].OnOpen = () => retryOpens[captured]++;
+    }
+    var retryProgress = new List<PhoneImportProgress>();
+    var retrySecond = await phoneEngine.ImportAsync(retryPlanWithManual,
+        new InlineProgress<PhoneImportProgress>(retryProgress.Add), CancellationToken.None);
+    var untouchedAfter = untouchedBefore.Keys.ToDictionary(name => name, name => (
+        Hash: Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(RetryPath(name)))),
+        Written: File.GetLastWriteTimeUtc(RetryPath(name)), Created: File.GetCreationTimeUtc(RetryPath(name))));
+    Assert(retrySecond is { Status: PhoneImportStatus.Completed, TotalCount: 2, CopiedCount: 1, SkippedExistingCount: 1, FailedCount: 0 }
+           && retrySecond.RetryItems.Count == 0
+           && File.ReadAllBytes(RetryPath("B.HEIC")).AsSpan().SequenceEqual(retryBytes[1])
+           && File.ReadAllText(RetryPath("D.MOV")) == "ELLE KONDU"
+           && untouchedBefore.All(pair => untouchedAfter[pair.Key] == pair.Value)
+           && retryOpens.SequenceEqual([0, 1, 0, 0, 0])
+           && retryProgress.All(value => value.TotalFiles == 1 && value.TotalBytes == retryBytes[1].Length)
+           && PhoneLeftovers(retryDestination).Length == 0
+           && CountsAddUp(retrySecond),
+        "Yeniden dene: kalanlar kopyalanmalı, aktarılmış/var olan dosyalar telefondan okunmamalı ve hedefte değişmemeli (açılışlar "
+        + string.Join(",", retryOpens) + ")");
+    var chainedPlan = PhoneImportEngine.CreateRetryPlan(retryPlanWithManual, retrySecond);
+    Assert(chainedPlan is { FileCount: 0, ScannedFileCount: 5 },
+        "Yeniden dene: zincirleme yeniden denemede ilk taramanın dosya sayısı korunmalı");
+    AssertThrows<ArgumentException>(() => PhoneImportEngine.CreateRetryPlan(retryFirstPlan with { DestinationRoot = phoneTestRoot }, retryFirst),
+        "Yeniden dene: başka hedefin sonucuyla yeniden deneme planı kurulmamalı");
+
+    // İptal sonrası: işlenmeyenler (iptal edilen dahil) yeniden denenir; var olan dosya varken işlenmeyen sayısı doğru.
+    var retryCancelTree = BuildIphone();
+    using var retryCancellation = new CancellationTokenSource();
+    retryCancelTree.Find("IMG_0002.JPG")!.OnRead = _ => retryCancellation.Cancel();
+    var (retryCancelSource, retryCancelDcim) = await OpenFakeAsync(retryCancelTree);
+    var retryCancelDestination = Path.Combine(phoneTestRoot, "hedef-iptal-yeniden");
+    var retryCancelPlan = await phoneEngine.PlanAsync(retryCancelSource, retryCancelDcim, "DCIM", retryCancelDestination, null,
+        CancellationToken.None);
+    var retryCancelResult = await phoneEngine.ImportAsync(retryCancelPlan, null, retryCancellation.Token);
+    var heicAfterCancel = File.GetLastWriteTimeUtc(Path.Combine(retryCancelDestination, "100APPLE", "IMG_0001.HEIC"));
+    retryCancelTree.Find("IMG_0002.JPG")!.OnRead = null;
+    var afterCancelPlan = PhoneImportEngine.CreateRetryPlan(retryCancelPlan, retryCancelResult);
+    var afterCancelResult = await phoneEngine.ImportAsync(afterCancelPlan, null, CancellationToken.None);
+    Assert(retryCancelResult is { Status: PhoneImportStatus.Cancelled, CopiedCount: 1, NotProcessedCount: 2 }
+           && retryCancelResult.NotProcessedPaths.SequenceEqual([Path.Combine("100APPLE", "IMG_0002.JPG"), Path.Combine("101APPLE", "IMG_0101.MOV")])
+           && retryCancelResult.RetryItems.Select(item => item.RelativePath).SequenceEqual(retryCancelResult.NotProcessedPaths)
+           && afterCancelPlan is { FileCount: 2, ExistingCount: 0 }
+           && afterCancelResult is { Status: PhoneImportStatus.Completed, CopiedCount: 2, TotalCount: 2 }
+           && File.ReadAllBytes(Path.Combine(retryCancelDestination, "100APPLE", "IMG_0002.JPG")).AsSpan().SequenceEqual(jpgBytes)
+           && File.ReadAllBytes(Path.Combine(retryCancelDestination, "101APPLE", "IMG_0101.MOV")).AsSpan().SequenceEqual(movBytes)
+           && File.GetLastWriteTimeUtc(Path.Combine(retryCancelDestination, "100APPLE", "IMG_0001.HEIC")) == heicAfterCancel
+           && CountsAddUp(retryCancelResult) && CountsAddUp(afterCancelResult),
+        "Yeniden dene: iptal sonrası yeniden deneme yalnız işlenmeyenleri almalı");
+    var presentCancelTree = BuildIphone();
+    using var presentCancellation = new CancellationTokenSource();
+    presentCancelTree.Find("IMG_0002.JPG")!.OnRead = _ => presentCancellation.Cancel();
+    var (presentCancelSource, presentCancelDcim) = await OpenFakeAsync(presentCancelTree);
+    var presentCancelDestination = Path.Combine(phoneTestRoot, "hedef-iptal-var");
+    Directory.CreateDirectory(Path.Combine(presentCancelDestination, "100APPLE"));
+    await File.WriteAllTextAsync(Path.Combine(presentCancelDestination, "100APPLE", "IMG_0001.HEIC"), "VAR");
+    var presentCancelResult = await phoneEngine.ImportAsync(
+        await phoneEngine.PlanAsync(presentCancelSource, presentCancelDcim, "DCIM", presentCancelDestination, null, CancellationToken.None),
+        null, presentCancellation.Token);
+    Assert(presentCancelResult is { Status: PhoneImportStatus.Cancelled, TotalCount: 3, CopiedCount: 0, SkippedExistingCount: 1, NotProcessedCount: 2 }
+           && CountsAddUp(presentCancelResult),
+        "Yeniden dene: var olan dosya atlanırken iptalde işlenmeyen sayısı kopyalanacaklara göre doğru olmalı");
+
+    // Aygıt kopması sonrası: başarısız öğe + işlenmeyenler; yeniden bağlanınca kalanlar alınır.
+    var retryLostTree = BuildIphone();
+    var (retryLostSource, retryLostDcim) = await OpenFakeAsync(retryLostTree);
+    retryLostTree.Find("IMG_0002.JPG")!.OnOpen = () =>
+    {
+        retryLostSource.Disconnected = true;
+        throw new COMException("The device is not connected.", unchecked((int)0x8007048F));
+    };
+    var retryLostDestination = Path.Combine(phoneTestRoot, "hedef-koptu-yeniden");
+    var retryLostPlan = await phoneEngine.PlanAsync(retryLostSource, retryLostDcim, "Apple iPhone › DCIM", retryLostDestination, null,
+        CancellationToken.None);
+    var retryLostResult = await phoneEngine.ImportAsync(retryLostPlan, null, CancellationToken.None);
+    retryLostSource.Disconnected = false;
+    retryLostTree.Find("IMG_0002.JPG")!.OnOpen = null;
+    var afterLostPlan = PhoneImportEngine.CreateRetryPlan(retryLostPlan, retryLostResult);
+    var afterLostResult = await phoneEngine.ImportAsync(afterLostPlan, null, CancellationToken.None);
+    Assert(retryLostResult is { Status: PhoneImportStatus.StoppedDeviceDisconnected, CopiedCount: 1, FailedCount: 1, NotProcessedCount: 1 }
+           && retryLostResult.NotProcessedPaths.SequenceEqual([Path.Combine("101APPLE", "IMG_0101.MOV")])
+           && retryLostResult.RetryItems.Select(item => item.RelativePath)
+               .SequenceEqual([Path.Combine("100APPLE", "IMG_0002.JPG"), Path.Combine("101APPLE", "IMG_0101.MOV")])
+           && afterLostPlan is { FileCount: 2, ExistingCount: 0, ScannedFileCount: 3 }
+           && afterLostResult is { Status: PhoneImportStatus.Completed, CopiedCount: 2 }
+           && File.ReadAllBytes(Path.Combine(retryLostDestination, "101APPLE", "IMG_0101.MOV")).AsSpan().SequenceEqual(movBytes)
+           && CountsAddUp(retryLostResult),
+        "Yeniden dene: aygıt kopması sonrası yeniden deneme başarısız ve işlenmeyen dosyaları almalı");
+
+    // (iv) Aktarılamayanlar listesi: bütün başarısızlar, HRESULT, işlenmeyenler, okunamayan klasörler; seri/aygıt kimliği yok.
+    const string reportSerial = "00008110001E2D3A0E88801E";
+    var reportPlan = manyPlan with
+    {
+        ScanFailures = [new PhoneImportFailure(Path.Combine("101APPLE", "Gizli"), PhoneImportErrorKind.AccessDenied,
+            unchecked((int)0x80070005), "Access is denied.")]
+    };
+    var reportResult = manyResult with
+    {
+        Failures = [.. manyResult.Failures.SkipLast(1),
+            manyResult.Failures[^1] with { Message = $@"Aygıt \\?\usb#vid_05ac&pid_12a8#{reportSerial}#{{6ac27878-a6fa-4155-ba85-f98f491d4f33}} yanıt vermedi" }],
+        NotProcessedCount = 1,
+        NotProcessedPaths = [Path.Combine("102APPLE", "IMG_0500.MOV")]
+    };
+    var reportTime = new DateTimeOffset(2026, 11, 6, 14, 30, 5, TimeSpan.FromHours(3));
+    var turkishReport = PhoneImportReport.Build(reportPlan, reportResult, english: false, "1.7.6.0", reportTime, "Windows depolama (WinRT)");
+    var englishReport = PhoneImportReport.Build(reportPlan, reportResult, english: true, "1.7.6.0", reportTime);
+    var reportLines = turkishReport.Split("\r\n");
+    var failureLines = reportLines.Where(line => line.StartsWith("100APPLE", StringComparison.Ordinal)).ToArray();
+    var reportBytes = PhoneImportReport.Encode(turkishReport);
+    Assert(manyResult.Failures.All(failure => turkishReport.Contains(failure.RelativePath + "\t", StringComparison.Ordinal))
+           && failureLines.Length == 30
+           && failureLines.All(line => line.Split('\t') is [_, var reason, "0x8007001F", _]
+                                       && reason == PhoneImportErrors.Describe(PhoneImportErrorKind.DeviceNotFunctioning, false))
+           && turkishReport.Contains("== Başarısız dosyalar (30) ==", StringComparison.Ordinal)
+           && turkishReport.Contains("== İşlenmeyen dosyalar (1) ==\r\n" + Path.Combine("102APPLE", "IMG_0500.MOV") + "\r\n", StringComparison.Ordinal)
+           && turkishReport.Contains("== Okunamayan alt klasörler (1) ==", StringComparison.Ordinal)
+           && turkishReport.Contains(Path.Combine("101APPLE", "Gizli") + "\t", StringComparison.Ordinal)
+           && turkishReport.Contains("0x80070005", StringComparison.Ordinal)
+           && turkishReport.Contains("Tarih: 2026-11-06 14:30:05 +03:00", StringComparison.Ordinal)
+           && turkishReport.Contains("Uygulama sürümü: 1.7.6.0", StringComparison.Ordinal)
+           && turkishReport.Contains("Kaynak: Apple iPhone › DCIM", StringComparison.Ordinal)
+           && turkishReport.Contains("Hedef: " + manyResult.DestinationRoot, StringComparison.Ordinal)
+           && turkishReport.Contains("Erişim yolu: Windows depolama (WinRT)", StringComparison.Ordinal)
+           && turkishReport.Contains("Durum: Hatalarla tamamlandı", StringComparison.Ordinal)
+           && turkishReport.Contains("başarısız 30, işlenmeyen 1, okunamayan alt klasör 1", StringComparison.Ordinal)
+           && !turkishReport.Contains(reportSerial, StringComparison.OrdinalIgnoreCase)
+           && !turkishReport.Contains("#test#", StringComparison.OrdinalIgnoreCase)
+           && turkishReport.Contains("vid_05ac&pid_12a8#…#", StringComparison.Ordinal)
+           && englishReport.Contains("Files not copied from the phone", StringComparison.Ordinal)
+           && englishReport.Contains("== Failed files (30) ==", StringComparison.Ordinal)
+           && englishReport.Contains("Access path: Fake", StringComparison.Ordinal)
+           && !englishReport.Contains(reportSerial, StringComparison.OrdinalIgnoreCase)
+           && reportBytes.AsSpan(0, 3).SequenceEqual(new byte[] { 0xEF, 0xBB, 0xBF })
+           && Encoding.UTF8.GetString(reportBytes, 3, reportBytes.Length - 3) == turkishReport
+           && PhoneImportReport.HasEntries(reportPlan, reportResult)
+           && !PhoneImportReport.HasEntries(structurePlan, structureResult)
+           && PhoneImportReport.HasEntries(retryLostPlan, retryLostResult)
+           && PhoneImportReport.SuggestedFileName(false, new DateTime(2026, 11, 6, 14, 30, 0)) == "CopyPaste-telefon-aktarilamayanlar-20261106-1430"
+           && PhoneImportReport.SuggestedFileName(true, new DateTime(2026, 11, 6, 9, 5, 0)) == "CopyPaste-phone-not-copied-20261106-0905",
+        "Aktarılamayanlar listesi: bütün başarısızlar sekmeyle ayrılmış sebep/HRESULT/mesajla, işlenmeyenler ve okunamayan klasörler "
+        + "yazılmalı; seri numarası/aygıt kimliği yazılmamalı; UTF-8 BOM olmalı");
+    var retryDiagnostics = new PhoneImportDiagnostics { LastPlan = afterLostPlan, LastResult = retryLostResult }.Build(english: false);
+    var manyDiagnostics = new PhoneImportDiagnostics { LastResult = manyResult }.Build(english: true);
+    Assert(retryDiagnostics.Contains("yeniden denenecek 2", StringComparison.Ordinal)
+           && retryDiagnostics.Contains("yeniden deneme planı (ilk tarama 3 dosya)", StringComparison.Ordinal)
+           && manyDiagnostics.Split('\n').Count(line => line.Contains("✗", StringComparison.Ordinal)) == 20
+           && manyDiagnostics.Contains("…and 10 more failed files", StringComparison.Ordinal),
+        "Tanılama: yeniden denenecek sayı ve yeniden deneme planı görünmeli, başarısız listesi 20 satırla sınırlı kalmalı");
 }
 finally
 {

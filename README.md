@@ -40,7 +40,10 @@ Authenticode imzasızdır; ayrıntılar aşağıdadır.
 3. Telefondaki klasörü seçin (bulunursa `DCIM` varsayılan olarak açılır), bu
    bilgisayardaki hedef klasörü seçin ve “Özeti hazırla”ya basın.
 4. Özeti kontrol edip “Aktarmayı başlat”a basın. Sonuçtan “Hedef klasörü aç” veya
-   eksik dosyalar için “Yeniden dene”yi kullanabilirsiniz.
+   eksik dosyalar için “Yeniden dene”yi kullanabilirsiniz. 1.7.7'den itibaren “Yeniden
+   dene” telefonu baştan taramaz, yalnız aktarılamayan ve işlenmeyen dosyaları dener
+   (telefon “Yenile” ile yeniden açıldıysa klasörü yeniden tarar); aktarılamayan
+   dosyaların tam listesi “Listeyi kaydet (.txt)” ile kaydedilebilir.
 
 Sorun olursa: iPhone dosyaları “Otomatik” aktarım biçiminde dönüştürüp
 veremeyebilir; iPhone'da Ayarlar > Fotoğraflar > “Mac'e veya PC'ye Aktar” >
