@@ -6,6 +6,23 @@ CopyPaste, [MIT License](LICENSE) ile açık kaynak olarak yayımlanır. Ayrınt
 [Code signing policy](CODE_SIGNING_POLICY.md) ve [gizlilik politikası](PRIVACY.md)
 belgelerine bakabilirsiniz.
 
+## CopyPaste 1.7.7
+
+- Telefondan aktar: “Yeniden dene” telefonu baştan taramaz; yalnız son aktarmada
+  başarısız olan veya işlenmeyen dosyaları yeniden dener (telefon “Yenile” ile yeniden
+  açıldıysa, bağlantı koptuysa ya da klasör veya hedef değiştiyse klasörü yeniden tarar)
+- Hedefte zaten var olan dosyalar ilerlemede sayılmaz; ilerleme yalnız kopyalanacak
+  dosyaları sayar, yarıda kalmış bir aktarmayı yeniden başlatmak en baştan başlıyormuş
+  gibi görünmez
+- Aktarılamayan dosyaların tam listesi (göreli yol, sebep, HRESULT), işlenmeyen dosyalar
+  ve okunamayan alt klasörler “Listeyi kaydet (.txt)” ile bir metin dosyasına
+  kaydedilebilir; sonuç ekranı ilk 20 başarısız dosyayı göstermeye devam eder
+- 1.7.5 kuruluysa ve açılmıyorsa 1.7.7 Setup'ını GitHub'dan indirip kurun; açılamayan
+  sürüm kendini güncelleyemez
+
+Son kararlı sürüm `v1.7.7`'dir. `v1.7.7` Setup EXE ve portable ZIP paketleri
+Authenticode imzasızdır; ayrıntılar aşağıdadır.
+
 ## CopyPaste 1.7.6
 
 - Düzeltme: 1.7.5 Setup ve portable ZIP paketlerinde uygulamanın kaynak dosyaları
@@ -26,9 +43,6 @@ belgelerine bakabilirsiniz.
 - İki Windows erişim yolu (WinRT depolama API'si ve Dosya Gezgini kabuğu) ile otomatik
   yedek; sorun bildirmek için yalnızca panoya kopyalanan tanılama bilgisi
 
-Son kararlı sürüm `v1.7.6`'dır. `v1.7.6` Setup EXE ve portable ZIP paketleri
-Authenticode imzasızdır; ayrıntılar aşağıdadır.
-
 ### Telefondan aktarma
 
 1. Telefonu USB kablosuyla bağlayın ve kilidini açın. iPhone “Bu bilgisayara
@@ -39,11 +53,15 @@ Authenticode imzasızdır; ayrıntılar aşağıdadır.
    bölümünde görünmelidir.
 3. Telefondaki klasörü seçin (bulunursa `DCIM` varsayılan olarak açılır), bu
    bilgisayardaki hedef klasörü seçin ve “Özeti hazırla”ya basın.
-4. Özeti kontrol edip “Aktarmayı başlat”a basın. Sonuçtan “Hedef klasörü aç” veya
-   eksik dosyalar için “Yeniden dene”yi kullanabilirsiniz. 1.7.7'den itibaren “Yeniden
-   dene” telefonu baştan taramaz, yalnız aktarılamayan ve işlenmeyen dosyaları dener
-   (telefon “Yenile” ile yeniden açıldıysa klasörü yeniden tarar); aktarılamayan
-   dosyaların tam listesi “Listeyi kaydet (.txt)” ile kaydedilebilir.
+4. Özeti kontrol edip “Aktarmayı başlat”a basın. Sonuçtan “Hedef klasörü aç”ı
+   kullanabilirsiniz.
+5. Bazı dosyalar aktarılamadıysa veya aktarma yarıda kaldıysa “Yeniden dene”ye basın:
+   telefon baştan taranmaz, yalnız aktarılamayan ve işlenmeyen dosyalar denenir.
+   Telefonu çıkarıp taktıysanız önce “Yenile”ye basın; bu durumda klasör yeniden
+   taranır ve hedefte zaten var olan dosyalar atlanır. Telefona sonradan eklenen
+   dosyalar için “Özeti hazırla”yı kullanın.
+6. Aktarılamayan dosyaların tam listesini sebepleriyle saklamak için “Listeyi kaydet
+   (.txt)”e basıp bu bilgisayarda bir konum seçin.
 
 Sorun olursa: iPhone dosyaları “Otomatik” aktarım biçiminde dönüştürüp
 veremeyebilir; iPhone'da Ayarlar > Fotoğraflar > “Mac'e veya PC'ye Aktar” >
@@ -182,8 +200,8 @@ Dağıtılabilir paketi üretmek için:
 .\tools\Build-Msix.ps1
 ```
 
-Geliştirme paketlerinde önerilen dosya `artifacts\CopyPaste-1.7.6-Setup.exe` kurulumudur.
-Alternatif olarak `artifacts\CopyPaste-1.7.6-win-x64.zip` arşivini yazma izniniz olan
+Geliştirme paketlerinde önerilen dosya `artifacts\CopyPaste-1.7.7-Setup.exe` kurulumudur.
+Alternatif olarak `artifacts\CopyPaste-1.7.7-win-x64.zip` arşivini yazma izniniz olan
 bir klasöre tamamen çıkarıp `CopyPaste.App.exe`
 dosyasını doğrudan çalıştırabilirsiniz. Explorer sağ tık menüsü uygulamadaki
 “Sağ tık menüsünü ekle” düğmesiyle kullanıcı hesabına kaydedilir; Windows 11'de klasik
@@ -192,10 +210,10 @@ menüler “Daha fazla seçenek göster” altında görüntülenir.
 Kurumsal sessiz kurulum örneği:
 
 ```powershell
-.\CopyPaste-1.7.6-Setup.exe /LANG=turkish /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /TASKS="explorer"
+.\CopyPaste-1.7.7-Setup.exe /LANG=turkish /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /TASKS="explorer"
 ```
 
-`v1.6.0`, `v1.7.0`, `v1.7.5` ve `v1.7.6` Setup EXE ve portable ZIP paketleri ürün sahibinin
+`v1.6.0`, `v1.7.0`, `v1.7.5`, `v1.7.6` ve `v1.7.7` Setup EXE ve portable ZIP paketleri ürün sahibinin
 sürüm bazlı istisnalarıyla Authenticode imzasız yayımlandı. İndirmeler `SHA256SUMS.txt`
 ile doğrulanmalıdır; imzasız MSIX yayımlanmaz. Bu istisnalar sonraki sürümlere
 taşınmaz. SignPath Foundation başvurusu 24 Temmuz 2026'da proje henüz yeterli dış
@@ -222,10 +240,10 @@ değerini ilk Release oluşturulmadan önce değiştirin.
 - `.github/workflows/pages.yml`, ana dal GitHub'a gönderildiğinde siteyi GitHub Pages'a yayınlar.
 - `.github/workflows/release.yml`, `v*` biçimindeki sürüm etiketi gönderildiğinde testleri çalıştırır,
   kurulum EXE'si ile taşınabilir paketi üretir ve SHA-256 özetleriyle GitHub Release'a ekler.
-- Geçici imzasız yayın istisnası yalnızca `v1.6.0`, `v1.7.0`, `v1.7.5` veya `v1.7.6` etiketi ile
+- Geçici imzasız yayın istisnası yalnızca `v1.6.0`, `v1.7.0`, `v1.7.5`, `v1.7.6` veya `v1.7.7` etiketi ile
   `ALLOW_UNSIGNED_RELEASE=true` değişkeni birlikteyken çalışır; sonraki sürümler dahil
   diğer bütün sürümler güvenilir imzalama olmadan durur.
-- Yeni bir sürüm yayımlamak için proje ve manifest sürümünü artırıp `v1.7.6` benzeri aynı sürüm
+- Yeni bir sürüm yayımlamak için proje ve manifest sürümünü artırıp `v1.7.7` benzeri aynı sürüm
   etiketi oluşturun. Uygulama kurulu dağıtımda `CopyPaste-*-Setup.exe`, portable dağıtımda
   `CopyPaste-*-win-x64.zip` paketini tercih eder; yalnızca tercih edilen paket yoksa diğerini
   indirme hedefi olarak kullanır.

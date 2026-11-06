@@ -1,10 +1,11 @@
 # Değişiklik günlüğü
 
-## 1.7.7 — geliştirme aşamasında
+## 1.7.7
 
 - Telefondan aktar: “Yeniden dene” artık telefonu baştan taramıyor; son aktarmada başarısız olan, işlenmeyen veya iptalde kalan dosyalar için yeni bir plan kurup yalnız onları deniyor (“Yalnız eksik N dosya yeniden deneniyor, M dosya zaten aktarılmış”). Her dosyanın hedefte olup olmadığı ve boş alan yeniden kontrol ediliyor; telefon “Yenile” ile yeniden açıldıysa, bağlantı koptuysa, klasör veya hedef değiştiyse ya da yeniden denenecek dosya kalmadıysa klasör eskisi gibi taranıyor. Telefona yeni eklenen dosyalar için “Özeti hazırla” kullanılıyor.
 - Telefondan aktar: hedefte zaten var olan dosyalar artık aktarma döngüsüne alınmıyor, doğrudan “zaten var” sayılıyor; ilerleme çubuğu ve dosya/bayt toplamları yalnız kopyalanacak dosyaları sayıyor. Yarıda kalmış bir aktarmayı yeniden başlatmak artık en baştan başlıyormuş gibi görünmüyor.
 - Telefondan aktar: başarısız dosyaların hepsi sonuçta tutuluyor (önceden ilk 20'si). Sonuç ekranı yine ilk 20'yi gösteriyor ve kalan sayıyı belirtiyor; yeni “Listeyi kaydet (.txt)” düğmesi başarısız dosyaların tam listesini (göreli yol, sebep, HRESULT, mesaj; sekmeyle ayrılmış), işlenmeyen dosyaları ve okunamayan alt klasörleri tarih, uygulama sürümü, kaynak, hedef, erişim yolu, durum ve sayılarla UTF-8 (BOM'lu) bir metin dosyasına kaydediyor. Dosyaya aygıt kimliği veya seri numarası yazılmıyor. Tanılama metni yeniden denenecek dosya sayısını da gösteriyor.
+- `v1.7.7` Setup ve portable ZIP paketleri, güvenilir kod imzalama sertifikası bulunmadığı için ürün sahibinin 6 Kasım 2026 tarihli sürüme özel onayıyla açık uyarı ve SHA-256 doğrulamasıyla Authenticode imzasız yayımlanıyor; imzasız MSIX yayımlanmıyor. Bu istisna sonraki sürümlere taşınmaz.
 
 ## 1.7.6
 

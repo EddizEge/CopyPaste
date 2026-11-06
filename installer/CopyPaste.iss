@@ -1,8 +1,8 @@
 #ifndef AppVersion
-  #define AppVersion "1.7.6"
+  #define AppVersion "1.7.7"
 #endif
 #ifndef SourceDir
-  #define SourceDir "..\artifacts\CopyPaste-1.7.6-win-x64"
+  #define SourceDir "..\artifacts\CopyPaste-1.7.7-win-x64"
 #endif
 #ifndef OutputDir
   #define OutputDir "..\artifacts"

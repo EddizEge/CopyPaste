@@ -10,16 +10,18 @@ public static class ReleaseNotesCatalog
 {
     public static IReadOnlyList<ReleaseNote> All { get; } =
     [
-        new("1.7.7", true,
+        new("1.7.7", false,
         [
             "Telefondan aktar: “Yeniden dene” artık telefonu baştan taramıyor; yalnız son aktarmada başarısız olan veya işlenmeyen dosyaları yeniden deniyor. Telefon yeniden bağlandıysa ya da klasör veya hedef değiştiyse klasör eskisi gibi taranıyor.",
             "Telefondan aktar: hedefte zaten var olan dosyalar ilerlemede sayılmıyor; yarıda kalmış bir aktarmayı yeniden başlatmak en baştan başlıyormuş gibi görünmüyor.",
-            "Telefondan aktar: aktarılamayan dosyaların tam listesi sebepleriyle birlikte “Listeyi kaydet (.txt)” düğmesiyle bir metin dosyasına kaydedilebiliyor; sonuç ekranı ilk 20 dosyayı göstermeye devam ediyor."
+            "Telefondan aktar: aktarılamayan dosyaların tam listesi sebepleriyle birlikte “Listeyi kaydet (.txt)” düğmesiyle bir metin dosyasına kaydedilebiliyor; sonuç ekranı ilk 20 dosyayı göstermeye devam ediyor.",
+            "1.7.7 Setup ve portable ZIP paketleri, güvenilir kod imzalama sertifikası henüz bulunmadığı için Authenticode imzasız yayımlanıyor; SHA-256 değerleri yayımlanır ve imzasız MSIX dağıtılmaz."
         ],
         [
             "Import from phone: “Retry” no longer scans the phone from the start; it retries only the files that failed or weren't processed in the last import. If the phone was reconnected or the folder or destination changed, the folder is scanned as before.",
             "Import from phone: files that already exist at the destination are no longer counted in the progress, so restarting an interrupted import no longer looks like it starts over.",
-            "Import from phone: the full list of files that weren't copied, with the reasons, can be saved to a text file with the “Save list (.txt)” button; the result still shows the first 20 files."
+            "Import from phone: the full list of files that weren't copied, with the reasons, can be saved to a text file with the “Save list (.txt)” button; the result still shows the first 20 files.",
+            "The 1.7.7 Setup and portable ZIP are published without Authenticode signatures because no trusted code-signing certificate is available yet; SHA-256 hashes are published and no unsigned MSIX is distributed."
         ]),
         new("1.7.6", false,
         [
